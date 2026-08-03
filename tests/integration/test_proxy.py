@@ -162,6 +162,20 @@ async def test_allowlist_body_limit_health_and_metrics(tmp_path: Path) -> None:
         assert "runs" in (await client.get("/metrics")).json()
 
 
+async def test_configured_provider_body_limit(tmp_path: Path) -> None:
+    config = Config(
+        state_dir=tmp_path,
+        max_request_bytes=3,
+        providers={"openai": ProviderConfig("openai", "openai", "https://mock.local", "")},
+    )
+    app = create_app(config)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://local"
+    ) as client:
+        response = await client.post("/openai/chat/completions", content=b"1234")
+    assert response.status_code == 413 and "limit" in response.text
+
+
 def test_security_helpers() -> None:
     assert "connection" not in filtered_headers({"connection": "close", "x-ok": "yes"})
     assert upstream_url("https://safe.example/v1", "messages").startswith("https://safe.example/")

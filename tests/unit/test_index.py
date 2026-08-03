@@ -3,6 +3,7 @@ from pathlib import Path
 
 from llmcut.index.repository import RepositoryIndex
 from llmcut.index.select import pack_repository
+from llmcut.index.symbols import parse_source
 from llmcut.store.evidence import EvidenceStore
 
 
@@ -97,3 +98,12 @@ def test_incremental_cache_update_delete_and_rename(tmp_path: Path) -> None:
     renamed = RepositoryIndex(repo)
     paths = {item.path for item in renamed.build()}
     assert "renamed.ts" in paths and "web.ts" not in paths
+
+
+def test_parser_ranges_assignments_javascript_and_failure_fallback() -> None:
+    python = parse_source("x.py", "SETTING = 1\nasync def work():\n    pass\n")
+    assert {item.name for item in python.ranges} == {"SETTING", "work"}
+    javascript = parse_source("x.js", "import x from './x'; export class A {}; const y = 1;")
+    assert javascript.imports == ["./x"] and {item.name for item in javascript.ranges} == {"A", "y"}
+    assert parse_source("broken.py", "def (").parser == "python-ast-error"
+    assert parse_source("README.md", "text").parser == "generic"

@@ -32,7 +32,8 @@ class MetricsStore:
             ).fetchone()
             cache = conn.execute("SELECT COALESCE(SUM(cached_tokens),0) FROM usage").fetchone()[0]
             request_rows = conn.execute(
-                "SELECT original_tokens,effective_tokens,fallback,evaluated_parity "
+                "SELECT original_tokens,effective_tokens,fallback,evaluated_parity,"
+                "attempted_tokens "
                 "FROM request_metrics"
             ).fetchall()
         original, optimized = row[1] or 0, row[2] or 0
@@ -53,6 +54,9 @@ class MetricsStore:
             "p75_effective_reduction": _percentile(reductions, 0.75),
             "no_savings_rate": _rate(sum(value <= 0 for value in reductions), len(reductions)),
             "fallback_rate": _rate(sum(item[2] for item in request_rows), len(request_rows)),
+            "optimization_overhead_rate": _rate(
+                sum(item[4] > item[0] for item in request_rows), len(request_rows)
+            ),
             "evaluated_parity_rate": _rate(
                 sum(item[3] == 1 for item in request_rows),
                 sum(item[3] is not None for item in request_rows),

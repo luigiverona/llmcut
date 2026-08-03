@@ -192,3 +192,15 @@ def test_deep_json_fails_open_without_prompt_in_reason(tmp_path: Path) -> None:
         OptimizationMode.EXTREME,
     )
     assert result.status == "restored" and "SENSITIVE_PROMPT" not in (result.fallback_reason or "")
+
+
+def test_gemini_duplicate_function_declarations_are_safely_reduced(tmp_path: Path) -> None:
+    declaration = {"name": "lookup", "description": "x" * 1000, "parameters": {"type": "object"}}
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": "lookup"}]}],
+        "tools": [{"functionDeclarations": [declaration, declaration]}],
+    }
+    result = run(payload, GeminiAdapter(), "generate-content", tmp_path)
+    assert result.status == "optimized"
+    forwarded = json.loads(result.body)
+    assert forwarded["tools"][0]["functionDeclarations"] == [declaration]

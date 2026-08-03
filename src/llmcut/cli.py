@@ -70,7 +70,8 @@ def inspect(
 ) -> None:
     """Inspect repository scope, providers, counters, and security conditions."""
     config = load_config(repo)
-    records = RepositoryIndex(repo).build(include_untracked)
+    repository_index = RepositoryIndex(repo)
+    records = repository_index.build(include_untracked)
     data = {
         "repository": str(repo.resolve()),
         "files": len(records),
@@ -79,6 +80,7 @@ def inspect(
         "token_counter": "conservative estimate",
         "state_directory": str(config.state_dir),
         "external_bind_warning": external_bind_warning(config.host),
+        "index_cache": repository_index.stats(),
     }
     typer.echo(
         json.dumps(data, indent=2)
@@ -98,7 +100,8 @@ def pack(
     if not task:
         raise typer.BadParameter("--task is required")
     store = _store(repo)
-    records = RepositoryIndex(repo).build()
+    repository_index = RepositoryIndex(repo)
+    records = repository_index.build()
     blocks = pack_repository(repo.resolve(), records, task, store)
     request = CanonicalRequest(blocks, ModelConfiguration("unconfigured", "unchanged"))
     optimized, report = Optimizer(store).optimize(request, Policy(mode=mode))
@@ -325,9 +328,15 @@ def benchmark(repo: Annotated[Path, typer.Option("--repo")] = Path(".")) -> None
     import time
 
     started = time.perf_counter()
-    records = RepositoryIndex(repo).build()
+    repository_index = RepositoryIndex(repo)
+    records = repository_index.build()
     elapsed = time.perf_counter() - started
-    typer.echo(json.dumps({"files": len(records), "index_seconds": round(elapsed, 6)}, indent=2))
+    typer.echo(
+        json.dumps(
+            {"files": len(records), "index_seconds": round(elapsed, 6), **repository_index.stats()},
+            indent=2,
+        )
+    )
 
 
 def _record_optimization(store: EvidenceStore, mode: OptimizationMode, report: Any) -> None:

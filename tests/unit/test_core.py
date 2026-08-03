@@ -117,6 +117,21 @@ def test_recovery_ranges_and_matching(tmp_path: Path) -> None:
     assert recovery.source_range(ref.digest, 2, 3) == "two error\nthree"
     assert "2: two error" in recovery.matching(ref.digest, "error")
     assert "two error" in recovery.matching(ref.digest, "err.*", regex=True)
+    with pytest.raises(ValueError):
+        recovery.source_range(ref.digest, 0, 1)
+
+
+def test_recovery_dependencies_and_missing_original(tmp_path: Path) -> None:
+    store = EvidenceStore(tmp_path)
+    dep_ref = store.put("dependency body", "dep")
+    dep = block("dep", "dependency body")
+    dep.reference = dep_ref
+    parent = ContextBlock("parent", BlockKind.REPOSITORY, "parent", "p", dependencies=["dep"])
+    canonical = request([parent, dep])
+    recovery = Recovery(store)
+    assert recovery.dependencies(canonical, "parent") == ["dependency body"]
+    with pytest.raises(KeyError):
+        recovery.restore_request(canonical)
 
 
 def test_command_virtualization_never_hides_failure_warning_or_skip(tmp_path: Path) -> None:
@@ -136,6 +151,14 @@ def test_long_command_output_selects_smaller_format_and_managed_tools(tmp_path: 
     assert retrieval_tool_definitions("transparent") == []
     managed = retrieval_tool_definitions("managed")
     assert len(managed) == 6 and managed[0]["name"].startswith("llmcut_")
+    assert (
+        virtualize_output(
+            EvidenceStore(tmp_path / "compiler"), "error x.c:2\n" * 100, ["gcc"], "/repo", 1, 1
+        ).parser
+        == "compiler"
+    )
+    with pytest.raises(ValueError):
+        retrieval_tool_definitions("invalid")
 
 
 def test_checkpoint_validates_evidence_and_stale_revision(tmp_path: Path) -> None:
