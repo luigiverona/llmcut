@@ -52,7 +52,8 @@ def test_eval_same_settings_savings_and_regression(tmp_path: Path) -> None:
 
     result = run_case(case, Optimizer(EvidenceStore(tmp_path)), executor)
     assert result.settings_identical and not result.regression
-    assert result.baseline_input_tokens == 20 and result.optimized_input_tokens == 10
+    assert result.baseline_input_tokens == 20 and result.optimized_input_tokens == 20
+    assert result.fallback_reason == "attempted optimization was not smaller"
     assert seen[0] == seen[1]
 
 

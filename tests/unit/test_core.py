@@ -10,6 +10,7 @@ from llmcut.core.command import virtualize_output
 from llmcut.core.dedupe import deduplicate
 from llmcut.core.optimize import Optimizer
 from llmcut.core.recover import Recovery
+from llmcut.core.tools import retrieval_tool_definitions
 from llmcut.errors import IntegrityError, UnsupportedModeError
 from llmcut.model import BlockKind, CanonicalRequest, ContextBlock, ModelConfiguration
 from llmcut.policy import OptimizationMode, Policy
@@ -124,6 +125,17 @@ def test_command_virtualization_never_hides_failure_warning_or_skip(tmp_path: Pa
     assert value.exit_status == 1
     assert "FAILED" in value.summary and "WARNING" in value.summary and "skipped" in value.summary
     assert EvidenceStore(tmp_path).get(value.reference.digest) == raw
+    assert value.selected is False and value.effective_context == raw
+
+
+def test_long_command_output_selects_smaller_format_and_managed_tools(tmp_path: Path) -> None:
+    raw = "collection noise\n" * 500 + "FAILED test_x.py:10 warning: skipped\n"
+    value = virtualize_output(EvidenceStore(tmp_path), raw, ["pytest"], "/repo", 1, 2.0, 2)
+    assert value.selected and len(value.effective_context) < len(raw)
+    assert value.parser == "pytest" and "FAILED" in value.effective_context
+    assert retrieval_tool_definitions("transparent") == []
+    managed = retrieval_tool_definitions("managed")
+    assert len(managed) == 6 and managed[0]["name"].startswith("llmcut_")
 
 
 def test_checkpoint_validates_evidence_and_stale_revision(tmp_path: Path) -> None:

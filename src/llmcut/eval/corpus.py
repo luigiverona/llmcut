@@ -18,6 +18,9 @@ class CorpusCase:
     expected_files: list[str] | None = None
     timeout: float = 60
     provider_config: str | None = None
+    recorded_response: dict[str, Any] | None = None
+    expected_output: dict[str, Any] | None = None
+    normalize_response: bool = False
 
 
 def read_corpus(path: Path) -> Iterator[CorpusCase]:
@@ -34,6 +37,9 @@ def read_corpus(path: Path) -> Iterator[CorpusCase]:
                 value.get("expected_files"),
                 value.get("timeout", 60),
                 value.get("provider_configuration_reference"),
+                value.get("recorded_response"),
+                value.get("expected_output"),
+                bool(value.get("normalize_response", False)),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"invalid corpus record at line {number}: {exc}") from exc

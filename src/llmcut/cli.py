@@ -225,21 +225,70 @@ def stats(repo: Annotated[Path, typer.Option("--repo")] = Path(".")) -> None:
 
 
 @app.command("eval")
-def evaluate(corpus: Annotated[Path, typer.Option("--corpus")]) -> None:
-    """Validate an offline JSONL corpus (execution is supplied by library integrations)."""
+def evaluate(
+    corpus: Annotated[Path, typer.Option("--corpus")],
+    repo: Annotated[Path, typer.Option("--repo")] = Path("."),
+    minimum_reduction: Annotated[float, typer.Option("--minimum-reduction")] = 0.0,
+) -> None:
+    """Execute deterministic baseline-versus-optimized offline evaluations."""
     from llmcut.eval.corpus import read_corpus
+    from llmcut.eval.runner import run_case
+    from llmcut.tokens.estimate import ConservativeEstimator
 
     cases = list(read_corpus(corpus))
-    typer.echo(
-        json.dumps(
-            {
-                "cases": len(cases),
-                "valid": True,
-                "note": "use llmcut.eval.run_case with a configured executor",
-            },
-            indent=2,
+    store = _store(repo)
+    estimator = ConservativeEstimator()
+    results: list[dict[str, Any]] = []
+    failed = False
+    for case in cases:
+        if case.provider_config not in {None, "fake", "recorded"} or case.recorded_response is None:
+            results.append(
+                {
+                    "task_id": case.task_id,
+                    "passed": False,
+                    "error": "offline case requires fake/recorded provider and recorded_response",
+                }
+            )
+            failed = True
+            continue
+
+        from functools import partial
+
+        execute = partial(
+            _execute_recorded, response=dict(case.recorded_response), estimator=estimator
         )
+
+        result = run_case(case, Optimizer(store), execute)
+        evaluator_passed, evaluator_error = _run_evaluator(case, result, corpus.parent)
+        reduction = (
+            (result.baseline_input_tokens - result.effective_input_tokens)
+            / result.baseline_input_tokens
+            * 100
+            if result.baseline_input_tokens
+            else 0.0
+        )
+        passed = not result.regression and evaluator_passed and reduction >= minimum_reduction
+        failed = failed or not passed
+        results.append(
+            {
+                "task_id": case.task_id,
+                "passed": passed,
+                "quality_parity": not result.regression,
+                "original_tokens": result.baseline_input_tokens,
+                "attempted_tokens": result.attempted_input_tokens,
+                "effective_tokens": result.effective_input_tokens,
+                "reduction_percent": round(reduction, 4),
+                "count_quality": "estimated",
+                "cached_tokens": result.cached_tokens,
+                "fallback_reason": result.fallback_reason,
+                "evaluator_error": evaluator_error,
+            }
+        )
+    typer.echo(
+        json.dumps({"cases": len(results), "passed": not failed, "results": results}, indent=2)
     )
+    if failed:
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -290,6 +339,40 @@ def _record_optimization(store: EvidenceStore, mode: OptimizationMode, report: A
         TokenCount(report.original_tokens, quality, "optimizer"),
         TokenCount(report.optimized_tokens, quality, "optimizer"),
     )
+
+
+def _run_evaluator(case: Any, result: Any, cwd: Path) -> tuple[bool, str | None]:
+    if not case.evaluator_command:
+        return True, None
+    import subprocess
+
+    try:
+        completed = subprocess.run(
+            case.evaluator_command,
+            cwd=cwd,
+            input=json.dumps(asdict(result)),
+            text=True,
+            capture_output=True,
+            timeout=case.timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "evaluator timed out"
+    if completed.returncode != 0:
+        return False, f"evaluator exited {completed.returncode}"
+    return True, None
+
+
+def _execute_recorded(
+    value: CanonicalRequest, *, response: dict[str, Any], estimator: Any
+) -> tuple[dict[str, Any], dict[str, int]]:
+    return dict(response), {
+        "input_tokens": estimator.count(value.to_json(), model=value.model.model).value,
+        "output_tokens": estimator.count(json.dumps(response)).value,
+        "cached_tokens": 0,
+        "recovery_tokens": 0,
+        "retries": 0,
+    }
 
 
 def run() -> None:

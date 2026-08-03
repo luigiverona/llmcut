@@ -94,3 +94,38 @@ def test_evidence_checkpoint_and_stats(tmp_path: Path) -> None:
     shown = runner.invoke(app, ["checkpoint", "show", created.stdout.strip(), "--repo", str(repo)])
     assert json.loads(shown.stdout)["objective"] == "goal"
     assert json.loads(runner.invoke(app, ["stats", "--repo", str(repo)]).stdout)["runs"] == 1
+
+
+def test_eval_executes_and_fails_regressions(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path)
+    request = CanonicalRequest([], ModelConfiguration("fake", "m"))
+    passing = tmp_path / "pass.jsonl"
+    passing.write_text(
+        json.dumps(
+            {
+                "task_id": "ok",
+                "input_request": request.to_dict(),
+                "expected_invariants": {"answer": 1},
+                "recorded_response": {"answer": 1},
+                "provider_configuration_reference": "fake",
+            }
+        )
+        + "\n"
+    )
+    result = runner.invoke(app, ["eval", "--corpus", str(passing), "--repo", str(repo)])
+    assert result.exit_code == 0 and json.loads(result.stdout)["passed"] is True
+    failing = tmp_path / "fail.jsonl"
+    failing.write_text(
+        json.dumps(
+            {
+                "task_id": "bad",
+                "input_request": request.to_dict(),
+                "expected_invariants": {"answer": 2},
+                "recorded_response": {"answer": 1},
+                "provider_configuration_reference": "fake",
+            }
+        )
+        + "\n"
+    )
+    result = runner.invoke(app, ["eval", "--corpus", str(failing), "--repo", str(repo)])
+    assert result.exit_code == 1 and json.loads(result.stdout)["passed"] is False

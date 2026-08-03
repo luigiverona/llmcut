@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -84,6 +85,7 @@ def create_app(config: Config) -> Starlette:
         forwarded_body = optimization.body
         stream_requested = _stream_requested(forwarded_body, path)
         client: httpx.AsyncClient = request.app.state.client
+        upstream_started = time.perf_counter()
         try:
             upstream_request = client.build_request(
                 request.method,
@@ -109,6 +111,30 @@ def create_app(config: Config) -> Starlette:
                 status_code=502,
             )
         response_headers = filtered_headers(dict(upstream.headers))
+        upstream_seconds = time.perf_counter() - upstream_started
+        metric_id = metrics.record_request(
+            {
+                "provider": provider.kind,
+                "endpoint_format": endpoint_format,
+                "mode": mode.value,
+                "integration_mode": config.integration_mode,
+                "original_tokens": optimization.original_tokens,
+                "attempted_tokens": optimization.attempted_tokens,
+                "effective_tokens": optimization.effective_tokens,
+                "output_tokens": 0,
+                "cached_tokens": 0,
+                "reasoning_tokens": 0,
+                "count_quality": optimization.count_quality,
+                "optimization_seconds": optimization.duration_seconds,
+                "upstream_seconds": upstream_seconds,
+                "fallback": int(optimization.status != "optimized"),
+                "fallback_reason": optimization.fallback_reason,
+                "omitted_blocks": optimization.omitted_blocks,
+                "recovery_events": 0,
+                "retries": 0,
+                "evaluated_parity": None,
+            }
+        )
         if config.diagnostic_headers:
             response_headers.update(_diagnostic_headers(optimization, mode))
         if stream_requested:
@@ -128,7 +154,7 @@ def create_app(config: Config) -> Starlette:
             )
         content = await upstream.aread()
         await upstream.aclose()
-        _record_usage(metrics, provider.kind, content)
+        _record_usage(metrics, provider.kind, content, metric_id)
         return Response(
             content,
             status_code=upstream.status_code,
@@ -156,7 +182,9 @@ def _stream_requested(body: bytes, path: str) -> bool:
     return value.get("stream") is True
 
 
-def _record_usage(metrics: MetricsStore, provider_kind: str, content: bytes) -> None:
+def _record_usage(
+    metrics: MetricsStore, provider_kind: str, content: bytes, metric_id: str | None = None
+) -> None:
     try:
         response = json.loads(content)
         adapter = {
@@ -178,6 +206,17 @@ def _record_usage(metrics: MetricsStore, provider_kind: str, content: bytes) -> 
                         json.dumps(usage, sort_keys=True),
                     ),
                 )
+                if metric_id is not None:
+                    conn.execute(
+                        "UPDATE request_metrics SET output_tokens=?,cached_tokens=?,"
+                        "reasoning_tokens=? WHERE id=?",
+                        (
+                            usage["output_tokens"],
+                            usage["cached_tokens"],
+                            usage["reasoning_tokens"],
+                            metric_id,
+                        ),
+                    )
     except (json.JSONDecodeError, TypeError, KeyError, ValueError):
         # Usage observation is optional and must never alter provider response semantics.
         return

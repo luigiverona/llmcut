@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -29,6 +30,10 @@ class EvaluationResult:
     baseline_latency: float
     optimized_latency: float
     regression: bool
+    attempted_input_tokens: int = 0
+    effective_input_tokens: int = 0
+    fallback_reason: str | None = None
+    evaluator_passed: bool = True
 
 
 def run_case(
@@ -50,10 +55,20 @@ def run_case(
         optimized_request.model.reasoning,
     ):
         raise ValueError("optimizer changed provider/model/settings")
+    attempted_tokens = report.optimized_tokens
+    fallback_reason = None
+    execution_request = optimized_request
+    if report.optimized_tokens >= report.original_tokens:
+        execution_request = case.request
+        fallback_reason = "attempted optimization was not smaller"
     started = time.perf_counter()
-    optimized, usage = execute(optimized_request)
+    optimized, usage = execute(execution_request)
     optimized_latency = time.perf_counter() - started
-    parity = all(optimized.get(key) == value for key, value in case.expected_invariants.items())
+    parity = _normalize(baseline) == _normalize(optimized) and all(
+        optimized.get(key) == value for key, value in case.expected_invariants.items()
+    )
+    if case.expected_output is not None:
+        parity = parity and _normalize(optimized) == _normalize(case.expected_output)
     complete = bool(optimized.get("complete", True))
     baseline_complete = bool(baseline.get("complete", True))
     return EvaluationResult(
@@ -71,4 +86,16 @@ def run_case(
         baseline_latency,
         optimized_latency,
         baseline_complete and (not complete or not parity),
+        attempted_tokens,
+        usage.get(
+            "input_tokens", report.original_tokens if fallback_reason else report.optimized_tokens
+        ),
+        fallback_reason,
     )
+
+
+def _normalize(value: dict[str, Any]) -> dict[str, Any]:
+    normalized = json.loads(json.dumps(value, sort_keys=True))
+    if not isinstance(normalized, dict):
+        raise TypeError("evaluation response must be an object")
+    return normalized

@@ -43,6 +43,21 @@ MIGRATIONS = [
     CREATE INDEX repository_index_blob_idx
       ON repository_index(repository_id,blob_oid,parser_version);
     """,
+    """
+    CREATE TABLE request_metrics(
+      id TEXT PRIMARY KEY, provider TEXT NOT NULL, endpoint_format TEXT NOT NULL,
+      mode TEXT NOT NULL, integration_mode TEXT NOT NULL,
+      original_tokens INTEGER NOT NULL, attempted_tokens INTEGER NOT NULL,
+      effective_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL DEFAULT 0,
+      cached_tokens INTEGER NOT NULL DEFAULT 0, reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+      count_quality TEXT NOT NULL, optimization_seconds REAL NOT NULL,
+      upstream_seconds REAL NOT NULL, fallback INTEGER NOT NULL,
+      fallback_reason TEXT, omitted_blocks INTEGER NOT NULL,
+      recovery_events INTEGER NOT NULL DEFAULT 0, retries INTEGER NOT NULL DEFAULT 0,
+      evaluated_parity INTEGER, created_at INTEGER NOT NULL
+    );
+    CREATE INDEX request_metrics_created_idx ON request_metrics(created_at);
+    """,
 ]
 
 
