@@ -92,6 +92,65 @@ async def test_streaming_passthrough(tmp_path: Path) -> None:
     assert response.content == b"data: one\n\ndata: two\n\n"
 
 
+async def test_proxy_optimizes_before_upstream_and_sets_diagnostics(tmp_path: Path) -> None:
+    captured: list[dict[str, object]] = []
+    tool = {
+        "type": "function",
+        "function": {"name": "lookup", "description": "x" * 1200, "parameters": {"type": "object"}},
+    }
+    config = Config(
+        state_dir=tmp_path,
+        providers={"openai": ProviderConfig("openai", "openai", "https://mock.local", "")},
+    )
+    app = create_app(config)
+    async with app.router.lifespan_context(app):
+        await app.state.client.aclose()
+        app.state.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=upstream_app(captured))
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://local"
+        ) as client:
+            response = await client.post(
+                "/openai/chat/completions",
+                json={
+                    "model": "m",
+                    "messages": [{"role": "user", "content": "lookup"}],
+                    "tools": [tool, tool],
+                    "stream": False,
+                },
+            )
+    upstream_body = captured[0]["body"]
+    assert isinstance(upstream_body, dict) and len(upstream_body["tools"]) == 1
+    assert response.headers["x-llmcut-status"] == "optimized"
+    assert int(response.headers["x-llmcut-optimized-tokens"]) < int(
+        response.headers["x-llmcut-original-tokens"]
+    )
+    assert response.headers["x-llmcut-count-quality"] == "estimated"
+
+
+async def test_diagnostic_headers_can_be_disabled(tmp_path: Path) -> None:
+    captured: list[dict[str, object]] = []
+    config = Config(
+        state_dir=tmp_path,
+        diagnostic_headers=False,
+        providers={"openai": ProviderConfig("openai", "openai", "https://mock.local", "")},
+    )
+    app = create_app(config)
+    async with app.router.lifespan_context(app):
+        await app.state.client.aclose()
+        app.state.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=upstream_app(captured))
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://local"
+        ) as client:
+            response = await client.post(
+                "/openai/chat/completions", json={"model": "m", "messages": []}
+            )
+    assert "x-llmcut-status" not in response.headers
+
+
 async def test_allowlist_body_limit_health_and_metrics(tmp_path: Path) -> None:
     config = Config(state_dir=tmp_path, max_request_bytes=3, providers={})
     app = create_app(config)

@@ -8,13 +8,24 @@ from llmcut.model import BlockKind, CanonicalRequest, ContextBlock, ModelConfigu
 
 
 class AnthropicAdapter(ProviderAdapter):
+    def validate_native(self, payload: dict[str, Any]) -> None:
+        super().validate_native(payload)
+        if not isinstance(payload.get("messages"), list) or not isinstance(
+            payload.get("max_tokens"), int
+        ):
+            raise ValueError("Anthropic request requires messages and max_tokens")
+
     def from_native(self, payload: dict[str, Any]) -> CanonicalRequest:
         known = {"model", "system", "messages", "tools", "max_tokens", "stream", "thinking"}
         blocks: list[ContextBlock] = []
         if "system" in payload:
             blocks.append(
                 ContextBlock(
-                    "system", BlockKind.SYSTEM, _text(payload["system"]), "anthropic:system"
+                    "system",
+                    BlockKind.SYSTEM,
+                    _text(payload["system"]),
+                    "anthropic:system",
+                    metadata={"native_content": payload["system"], "dedupe_safe": False},
                 )
             )
         for index, message in enumerate(payload.get("messages", [])):
@@ -25,7 +36,7 @@ class AnthropicAdapter(ProviderAdapter):
                     role,
                     _text(message.get("content", "")),
                     "anthropic:messages",
-                    metadata={"native_content": message.get("content", "")},
+                    metadata={"native_content": message.get("content", ""), "dedupe_safe": False},
                 )
             )
         tools = [
@@ -63,7 +74,16 @@ class AnthropicAdapter(ProviderAdapter):
             if block.kind in {BlockKind.SYSTEM, BlockKind.DEVELOPER}
         ]
         if systems:
-            payload["system"] = "\n".join(systems)
+            system_blocks = [
+                block
+                for block in request.blocks
+                if block.kind in {BlockKind.SYSTEM, BlockKind.DEVELOPER}
+            ]
+            payload["system"] = (
+                system_blocks[0].metadata.get("native_content", systems[0])
+                if len(system_blocks) == 1
+                else "\n".join(systems)
+            )
         payload["messages"] = [
             {
                 "role": "assistant" if block.kind is BlockKind.ASSISTANT else "user",

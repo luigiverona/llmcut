@@ -22,6 +22,11 @@ class OptimizationReport:
     duplicates: list[dict[str, str]] = field(default_factory=list)
     original_tokens: int = 0
     optimized_tokens: int = 0
+    attempted_tokens: int = 0
+    effective_tokens: int = 0
+    optimization_overhead_tokens: int = 0
+    fallback_reason: str | None = None
+    restoration_overhead_tokens: int = 0
     count_quality: str = "estimated"
     fallback: str = "full_context"
     stable_prefix_digest: str = ""

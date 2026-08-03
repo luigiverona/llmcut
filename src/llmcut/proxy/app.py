@@ -11,8 +11,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
-from llmcut.adapters import AnthropicAdapter, GeminiAdapter, OpenAIAdapter
+from llmcut.adapters import AnthropicAdapter, GeminiAdapter, OpenAIAdapter, adapter_for
 from llmcut.config import Config
+from llmcut.core.optimize import Optimizer
+from llmcut.policy import OptimizationMode
+from llmcut.proxy.optimize import NativeOptimization, optimize_native
 from llmcut.proxy.security import filtered_headers, upstream_url
 from llmcut.store.evidence import EvidenceStore
 from llmcut.store.metrics import MetricsStore
@@ -21,6 +24,7 @@ from llmcut.store.metrics import MetricsStore
 def create_app(config: Config) -> Starlette:
     evidence = EvidenceStore(config.state_dir, persist_content=config.persist_prompt_content)
     metrics = MetricsStore(evidence.db)
+    optimizer = Optimizer(evidence)
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
@@ -31,7 +35,7 @@ def create_app(config: Config) -> Starlette:
     async def health(_: Request) -> Response:
         try:
             evidence.db.integrity_check()
-            return JSONResponse({"status": "ok", "version": "0.1.0"})
+            return JSONResponse({"status": "ok", "version": "0.2.0"})
         except Exception:
             return JSONResponse({"status": "degraded"}, status_code=503)
 
@@ -71,11 +75,22 @@ def create_app(config: Config) -> Starlette:
             else:
                 headers["authorization"] = f"Bearer {credential}"
         headers.update(provider.headers)
-        stream_requested = _stream_requested(body, path)
+        adapter, endpoint_format = adapter_for(provider.kind, path)
+        try:
+            mode = OptimizationMode(config.mode)
+        except ValueError:
+            mode = OptimizationMode.EXTREME
+        optimization = optimize_native(body, adapter, endpoint_format, optimizer, mode)
+        forwarded_body = optimization.body
+        stream_requested = _stream_requested(forwarded_body, path)
         client: httpx.AsyncClient = request.app.state.client
         try:
             upstream_request = client.build_request(
-                request.method, target, content=body, headers=headers, params=request.query_params
+                request.method,
+                target,
+                content=forwarded_body,
+                headers=headers,
+                params=request.query_params,
             )
             upstream = await client.send(upstream_request, stream=stream_requested)
         except httpx.TimeoutException:
@@ -94,6 +109,8 @@ def create_app(config: Config) -> Starlette:
                 status_code=502,
             )
         response_headers = filtered_headers(dict(upstream.headers))
+        if config.diagnostic_headers:
+            response_headers.update(_diagnostic_headers(optimization, mode))
         if stream_requested:
 
             async def chunks() -> AsyncIterator[bytes]:
@@ -164,3 +181,13 @@ def _record_usage(metrics: MetricsStore, provider_kind: str, content: bytes) -> 
     except (json.JSONDecodeError, TypeError, KeyError, ValueError):
         # Usage observation is optional and must never alter provider response semantics.
         return
+
+
+def _diagnostic_headers(result: NativeOptimization, mode: OptimizationMode) -> dict[str, str]:
+    return {
+        "x-llmcut-status": result.status,
+        "x-llmcut-mode": mode.value,
+        "x-llmcut-original-tokens": str(result.original_tokens),
+        "x-llmcut-optimized-tokens": str(result.effective_tokens),
+        "x-llmcut-count-quality": result.count_quality,
+    }

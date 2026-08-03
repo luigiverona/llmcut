@@ -36,6 +36,8 @@ class OpenAIAdapter(ProviderAdapter):
                 metadata = {
                     key: value for key, value in message.items() if key not in {"role", "content"}
                 }
+                metadata["native_content"] = content
+                metadata["dedupe_safe"] = False
                 blocks.append(
                     ContextBlock(
                         f"message:{index}", kind, text, "openai:messages", metadata=metadata
@@ -50,6 +52,7 @@ class OpenAIAdapter(ProviderAdapter):
                         BlockKind.DEVELOPER,
                         _text(instructions),
                         "openai:instructions",
+                        metadata={"native_content": instructions, "dedupe_safe": False},
                     )
                 )
             input_value = payload.get("input", [])
@@ -67,7 +70,8 @@ class OpenAIAdapter(ProviderAdapter):
                             key: value
                             for key, value in item.items()
                             if key not in {"role", "content"}
-                        },
+                        }
+                        | {"native_content": item.get("content", item), "dedupe_safe": False},
                     )
                 )
         tools = [
@@ -103,7 +107,11 @@ class OpenAIAdapter(ProviderAdapter):
         payload["tools"] = [json.loads(tool.content) for tool in request.tools]
         if self.style == "chat":
             payload["messages"] = [
-                {"role": _kind_role(block.kind), "content": block.content, **block.metadata}
+                {
+                    "role": _kind_role(block.kind),
+                    "content": block.metadata.get("native_content", block.content),
+                    **_public_metadata(block.metadata),
+                }
                 for block in request.blocks
             ]
         else:
@@ -113,9 +121,22 @@ class OpenAIAdapter(ProviderAdapter):
                 if block.kind in {BlockKind.SYSTEM, BlockKind.DEVELOPER}
             ]
             if instructions:
-                payload["instructions"] = "\n".join(instructions)
+                instruction_blocks = [
+                    block
+                    for block in request.blocks
+                    if block.kind in {BlockKind.SYSTEM, BlockKind.DEVELOPER}
+                ]
+                payload["instructions"] = (
+                    instruction_blocks[0].metadata.get("native_content")
+                    if len(instruction_blocks) == 1
+                    else "\n".join(instructions)
+                )
             payload["input"] = [
-                {"role": _kind_role(block.kind), "content": block.content, **block.metadata}
+                {
+                    "role": _kind_role(block.kind),
+                    "content": block.metadata.get("native_content", block.content),
+                    **_public_metadata(block.metadata),
+                }
                 for block in request.blocks
                 if block.kind not in {BlockKind.SYSTEM, BlockKind.DEVELOPER}
             ]
@@ -131,6 +152,12 @@ class OpenAIAdapter(ProviderAdapter):
             "cached_tokens": details.get("cached_tokens", 0),
             "reasoning_tokens": output_details.get("reasoning_tokens", 0),
         }
+
+    def validate_native(self, payload: dict[str, Any]) -> None:
+        super().validate_native(payload)
+        key = "messages" if self.style == "chat" else "input"
+        if key not in payload or not isinstance(payload[key], (str, list)):
+            raise ValueError(f"OpenAI {self.style} request requires {key}")
 
 
 def _text(value: Any) -> str:
@@ -156,3 +183,11 @@ def _kind_role(kind: BlockKind) -> str:
         BlockKind.TOOL_RESULT: "tool",
         BlockKind.TOOL_CALL: "assistant",
     }.get(kind, "user")
+
+
+def _public_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in metadata.items()
+        if key not in {"native_content", "dedupe_safe"}
+    }

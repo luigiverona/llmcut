@@ -79,6 +79,36 @@ def test_economy_refuses_nonfunctional_behavior() -> None:
         Policy(mode=OptimizationMode.ECONOMY).validate()
 
 
+def test_modes_make_distinct_non_lossy_decisions(tmp_path: Path) -> None:
+    original = request(
+        [
+            ContextBlock(
+                "r",
+                BlockKind.REPOSITORY,
+                "old",
+                "repo",
+                metadata={"task_irrelevant": True, "confidence": "high"},
+            ),
+            ContextBlock(
+                "c",
+                BlockKind.CHECKPOINT,
+                "old checkpoint",
+                "history",
+                metadata={"superseded": True},
+            ),
+        ]
+    )
+    store = EvidenceStore(tmp_path)
+    strict, _ = Optimizer(store).optimize(original, Policy(mode=OptimizationMode.STRICT))
+    parity, _ = Optimizer(store).optimize(original, Policy(mode=OptimizationMode.PARITY))
+    extreme, _ = Optimizer(store).optimize(original, Policy(mode=OptimizationMode.EXTREME))
+    assert [x.id for x in strict.blocks] == ["r", "c"]
+    assert [x.id for x in parity.blocks] == ["r"]
+    assert extreme.blocks == []
+    assert strict.model == parity.model == extreme.model == original.model
+    assert Recovery(store).restore_request(extreme).to_json() == original.to_json()
+
+
 def test_recovery_ranges_and_matching(tmp_path: Path) -> None:
     store = EvidenceStore(tmp_path)
     ref = store.put("one\ntwo error\nthree\nfour", "log")

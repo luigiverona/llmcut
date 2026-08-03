@@ -8,6 +8,10 @@ from llmcut.model import BlockKind, CanonicalRequest, ContextBlock, ModelConfigu
 
 
 class GeminiAdapter(ProviderAdapter):
+    def validate_native(self, payload: dict[str, Any]) -> None:
+        if not isinstance(payload.get("contents"), list):
+            raise ValueError("Gemini request requires a contents list")
+
     def from_native(self, payload: dict[str, Any]) -> CanonicalRequest:
         known = {
             "model",
@@ -25,7 +29,7 @@ class GeminiAdapter(ProviderAdapter):
                     BlockKind.SYSTEM,
                     _parts(payload["systemInstruction"].get("parts", [])),
                     "gemini:systemInstruction",
-                    metadata={"native": payload["systemInstruction"]},
+                    metadata={"native": payload["systemInstruction"], "dedupe_safe": False},
                 )
             )
         for index, content in enumerate(payload.get("contents", [])):
@@ -36,7 +40,7 @@ class GeminiAdapter(ProviderAdapter):
                     kind,
                     _parts(content.get("parts", [])),
                     "gemini:contents",
-                    metadata={"native_parts": content.get("parts", [])},
+                    metadata={"native_parts": content.get("parts", []), "dedupe_safe": False},
                 )
             )
         declarations: list[dict[str, Any]] = []
@@ -81,9 +85,11 @@ class GeminiAdapter(ProviderAdapter):
             if block.kind in {BlockKind.SYSTEM, BlockKind.DEVELOPER}
         ]
         if systems:
-            payload["systemInstruction"] = {
-                "parts": [{"text": "\n".join(x.content for x in systems)}]
-            }
+            payload["systemInstruction"] = (
+                systems[0].metadata.get("native")
+                if len(systems) == 1
+                else {"parts": [{"text": "\n".join(x.content for x in systems)}]}
+            )
         payload["contents"] = [
             {
                 "role": "model" if block.kind is BlockKind.ASSISTANT else "user",

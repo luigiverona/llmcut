@@ -16,6 +16,9 @@ def deduplicate(blocks: list[ContextBlock]) -> tuple[list[ContextBlock], list[Du
     kept: list[ContextBlock] = []
     removed: list[Duplicate] = []
     for block in blocks:
+        if block.metadata.get("dedupe_safe") is False:
+            kept.append(block)
+            continue
         key = (block.kind.value, block.digest)
         canonical = seen.get(key)
         if canonical is None:
