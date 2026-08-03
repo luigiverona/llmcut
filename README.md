@@ -148,6 +148,24 @@ fake provider, checks identical settings and responses, runs optional argv-safe 
 attempted versus effective tokens, and exits nonzero on regressions. Bundled cases cover provider
 shapes, history, repository selection, pytest output, and honest no-savings fallback. They do not
 establish real-provider parity. No fixed reduction is guaranteed.
+
+### Bundled offline benchmark (Python 3.14.6)
+
+Counts below are conservative estimates. All ten deterministic response comparisons passed; cached
+tokens were zero and remain separate. “Not smaller” means the original request was selected.
+
+| Case | Original | Attempted | Effective | Reduction | Fallback |
+|---|---:|---:|---:|---:|---|
+| repeated-system | 406 | 439 | 406 | 0% | not smaller |
+| duplicated-tools | 372 | 419 | 372 | 0% | not smaller |
+| checkpoint-history | 364 | 405 | 364 | 0% | not smaller |
+| repository-symbol-range | 305 | 267 | 267 | 12.459% | none |
+| pytest-failure-output | 349 | 264 | 264 | 24.3553% | none |
+| OpenAI Chat | 228 | 393 | 228 | 0% | not smaller |
+| OpenAI Responses | 220 | 385 | 220 | 0% | not smaller |
+| Anthropic Messages | 235 | 402 | 235 | 0% | not smaller |
+| Gemini content | 229 | 394 | 229 | 0% | not smaller |
+| no-safe-savings | 153 | 251 | 153 | 0% | not smaller |
 Quality parity must be measured per workload.
 
 ## Limitations
