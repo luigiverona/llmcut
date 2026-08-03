@@ -4,7 +4,7 @@
 coding agents, and API clients. It keeps the smallest confidently sufficient working set in model
 context, stores original evidence locally, and expands context when exclusion could affect quality.
 
-Version 0.1.0 is intentionally conservative: **extreme is the default but is not lossy**. The
+Version 0.2.0 is intentionally conservative: **extreme is the default but is not lossy**. The
 optimizer does not change models, reasoning settings, tools, validation requirements, or source
 code. Low-confidence material stays in context; recoverable omission requires explicit,
 high-confidence evidence. The policy is enforced during optimization, but outcome parity is not
@@ -69,6 +69,12 @@ Then run `llmcut proxy` and send requests to
 through their OpenAI-compatible HTTP interfaces and configured base URLs. External binding emits
 an actionable warning and must be explicitly configured.
 
+Supported proxy routes perform native → canonical → optimization → native reconstruction and
+semantic safety validation before contacting the upstream. The reconstructed body is forwarded only
+when the complete native request is safe and smaller; otherwise the original bytes are replayed.
+Diagnostic response headers report status, mode, counts, and quality without prompt data. Set
+`proxy.diagnostic_headers = false` to disable them.
+
 ## Architecture
 
 The canonical dataclass model preserves ordered role-bearing blocks, tool-call metadata, unknown
@@ -83,14 +89,14 @@ content. Cacheable input is reported separately from logical context reduction.
 
 ## Modes
 
-| Mode | v0.1.0 behavior |
+| Mode | v0.2.0 behavior |
 |---|---|
 | `strict` | Exact duplicate removal and stable/cache planning only |
-| `parity` | Strict plus recoverable selection, evidence, checkpoints, and repository packing |
-| `extreme` | Default; tighter recoverable selection and cache partitioning, same parity floor |
+| `parity` | Strict plus proven redundancy, superseded checkpoints, and verified command output |
+| `extreme` | Parity plus symbol ranges, dependency-aware packing, scoped tools, and disclosure APIs |
 | `economy` | Configuration is reserved; selecting it returns a clear not-implemented error |
 
-No mode in v0.1.0 enables lossy context, model downgrade, reasoning reduction, tool reduction that
+No mode in v0.2.0 enables lossy context, model downgrade, reasoning reduction, tool reduction that
 cannot be reversed, or validation reduction.
 
 ## Provider support
@@ -103,9 +109,16 @@ cannot be reversed, or validation reduction.
 | Anthropic Messages | System, messages, tools, cache usage | Yes | Transparent passthrough |
 | Gemini generateContent | Contents, parts, functions, cache/usage | Yes | Transparent passthrough |
 
-Streaming optimization is intentionally transparent in 0.1.0: chunks are bounded by upstream
+Streaming optimization occurs before connection; chunks are bounded by upstream
 backpressure and never accumulated as an unbounded response. Safely available usage metadata can
 be recorded by integrations; the transparent route does not invent unavailable usage.
+
+## Transparent and managed recovery
+
+`transparent` is the proxy default and never injects tools. Missing context cannot be added during
+an already-running response unless the client participates in another turn. Explicit `managed`
+integrations may obtain six provider-neutral `llmcut_*` retrieval schemas and dispatch them through
+the recovery API; configuration alone does not claim those tools are executable.
 
 ## Security and privacy
 
@@ -130,9 +143,11 @@ built-in fallback is a conservative UTF-8 byte estimate and is never labeled exa
 reduction, cached input, billed usage, recovery overhead, retries, output tokens, and reasoning
 tokens remain separate.
 
-The JSONL evaluation harness executes baseline and optimized requests through the same executor and
-checks identical provider/model/reasoning settings plus deterministic invariants. CI uses fake
-providers and local fixtures; real-provider execution is optional. No fixed reduction is guaranteed.
+The JSONL evaluator executes baseline and optimized paths through the same deterministic recorded or
+fake provider, checks identical settings and responses, runs optional argv-safe evaluators, reports
+attempted versus effective tokens, and exits nonzero on regressions. Bundled cases cover provider
+shapes, history, repository selection, pytest output, and honest no-savings fallback. They do not
+establish real-provider parity. No fixed reduction is guaranteed.
 Quality parity must be measured per workload.
 
 ## Limitations
@@ -141,8 +156,8 @@ Quality parity must be measured per workload.
 - Provider tokenization varies by model; local estimates do not replace provider-reported usage.
 - Caching can lower billed input without lowering logical context.
 - `llmcut` does not bypass provider quotas or accounting.
-- JavaScript/TypeScript symbol extraction is deliberately conservative lexical extraction in 0.1.0,
-  not a claim of complete parsing.
+- JavaScript and TypeScript use maintained Tree-sitter grammars; malformed syntax falls back safely.
+- Transparent mode cannot recover context during an already-running provider response.
 - Streaming response bodies are passed through; full streaming usage observation depends on what the
   provider reports and what the caller integration records.
 - Economy routing is not implemented.

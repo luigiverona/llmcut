@@ -16,4 +16,8 @@ recompute hashes. Garbage collection preserves checkpoint references. Repository
 follow symlinks or read Git-ignored/untracked files by default, known secret files, credential stores,
 private keys, vendored trees, or local state.
 
+Native JSON is body-size bounded, UTF-8 decoded, required to be an object, and rejected above 64
+levels of nesting. Fixed fallback reasons contain no prompt content or evidence identifiers. Request
+metrics contain numeric/accounting metadata only. Transparent mode never injects retrieval tools.
+
 Tests use local ASGI transports and mock servers. CI needs no network or provider credentials.

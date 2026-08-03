@@ -28,21 +28,27 @@ retrieval do not execute commands.
 ## Repository selection
 
 Git tracked files define default scope. Explicit untracked indexing uses Git's ignore rules. Secret
-names and state directories are excluded; symlinks are not followed. Python uses `ast` for reliable
-top-level symbols/imports. JavaScript/TypeScript uses intentionally labeled conservative lexical
-extraction; generic metadata remains available for every language. Deterministic scores use task
+names and state directories are excluded; symlinks are not followed. Python uses `ast` for exact
+symbol ranges and imports. JavaScript/TypeScript use maintained Tree-sitter grammars with generic
+full-file fallback. Clean tracked records are reused across commits by Git blob identity and parser
+version; working-tree changes, deletions, and renames invalidate transactionally. Scores use task
 terms, paths, changes, imports, symbols, tests, instructions, and configuration.
 
 ## Adapters, caching, and request flow
 
 OpenAI Chat/Responses, Anthropic Messages, and Gemini generateContent adapters translate canonical
 requests and usage. Provider-specific tool IDs and native content are retained in block metadata.
+Every supported proxy request proves an unchanged native round trip, then optimizes and validates
+protected fields and ordered content again. Full reconstructed native size—not omitted-block count—
+selects the candidate. Invalid, unsafe, or larger candidates replay the original request bytes.
 Stable serialization partitions policy, tools, repository, task, and dynamic content. Potential
 cacheability is not reported as actual cache use or logical reduction.
 
 Proxy flow is: resolve named configured provider, bound body, reject origin override, filter headers,
 inject credentials from the configured environment variable, apply timeout, and stream or return the
 upstream response. Streaming is backpressure-driven and closed on completion/cancellation.
+Transparent mode adds no tools. Managed integrations can explicitly obtain retrieval schemas, but
+must dispatch them through the recovery API themselves.
 
 ## Evaluation trade-offs
 
