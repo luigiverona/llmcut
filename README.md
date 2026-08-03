@@ -4,7 +4,7 @@
 coding agents, and API clients. It keeps the smallest confidently sufficient working set in model
 context, stores original evidence locally, and expands context when exclusion could affect quality.
 
-Version 0.2.0 is intentionally conservative: **extreme is the default but is not lossy**. The
+Version 0.3.0 adds explicit managed integration while remaining conservative: **extreme is the default but is not lossy**. The
 optimizer does not change models, reasoning settings, tools, validation requirements, or source
 code. Low-confidence material stays in context; recoverable omission requires explicit,
 high-confidence evidence. The policy is enforced during optimization, but outcome parity is not
@@ -32,6 +32,35 @@ permissions and are Git-ignored. Configuration precedence is CLI arguments, `LLM
 environment variables, project `.llmcut/config.toml`, user config, then safe defaults.
 
 ## Use
+
+Run or inspect a managed request:
+
+```bash
+llmcut run --request request.json --mode extreme --dry-run
+llmcut run --request request.json --mode extreme
+```
+
+The Python SDK exposes the same protocol without provider SDK coupling:
+
+```python
+from llmcut import Client, Context, ManagedRequest
+
+client = Client.from_config()
+result = client.run(
+    ManagedRequest(
+        provider="anthropic",
+        model="unchanged-model",
+        task="Fix the callback timeout",
+        context=[Context.source("src/auth/callback.py", source)],
+    ),
+    mode="extreme",
+)
+```
+
+`AsyncClient` provides the corresponding awaitable API. Persistence, timeout, and cancellation are
+caller-controlled. The local server exposes synchronous `POST /managed/run`, dry-run
+`POST /managed/plan`, and `GET /managed/runs/{id}`. It is loopback-only by default; setting the
+environment variable named by `proxy.managed_bearer_token_env` enables local bearer authentication.
 
 Build a deterministic repository pack:
 
@@ -87,16 +116,23 @@ storage, and security behavior. See [architecture](docs/architecture.md) and
 Context is byte-stably partitioned into policy, tools, repository structure, task, and dynamic
 content. Cacheable input is reported separately from logical context reduction.
 
+Canonical state, provider transport, evidence manifests, and diagnostic reports have separate
+serializations. Only model-bound block content and tool definitions enter logical token counts;
+digests, local paths, selection decisions, recovery references, and stored sizes never do.
+
 ## Modes
 
-| Mode | v0.2.0 behavior |
+Optimization and integration are orthogonal: `strict + transparent`, `extreme + transparent`,
+`parity + managed`, and `extreme + managed` are valid combinations.
+
+| Mode | v0.3.0 behavior |
 |---|---|
 | `strict` | Exact duplicate removal and stable/cache planning only |
 | `parity` | Strict plus proven redundancy, superseded checkpoints, and verified command output |
 | `extreme` | Parity plus symbol ranges, dependency-aware packing, scoped tools, and disclosure APIs |
 | `economy` | Configuration is reserved; selecting it returns a clear not-implemented error |
 
-No mode in v0.2.0 enables lossy context, model downgrade, reasoning reduction, tool reduction that
+No mode in v0.3.0 enables lossy context, model downgrade, reasoning reduction, tool reduction that
 cannot be reversed, or validation reduction.
 
 ## Provider support
@@ -115,10 +151,24 @@ be recorded by integrations; the transparent route does not invent unavailable u
 
 ## Transparent and managed recovery
 
-`transparent` is the proxy default and never injects tools. Missing context cannot be added during
-an already-running response unless the client participates in another turn. Explicit `managed`
-integrations may obtain six provider-neutral `llmcut_*` retrieval schemas and dispatch them through
-the recovery API; configuration alone does not claim those tools are executable.
+`transparent` is the proxy default, preserves primary messages byte-for-byte, and never injects
+tools. Missing context cannot be added during an already-running response unless the client
+participates in another turn. Managed schema version `1` classifies system/developer/user/assistant
+messages, tool calls/results, source, repository maps, configuration, tests, command output,
+checkpoints, documents, and current tasks. Retention is `required`, `stable`, `recoverable`,
+`superseded`, `redundant`, or `ephemeral`; critical instructions and the current task cannot be made
+removable.
+
+The managed planner retains policy, task, active tool continuity, named files/symbols, dependencies,
+tests/configuration, checkpoints, and unresolved failures in that order. Deferred evidence is stored
+exactly and exposed only through the task-scoped operations `evidence.get`, `source.range`,
+`symbol.get`, `dependency.get`, `log.search`, `log.range`, `context.expand`, and `repository.map`.
+Tool catalogs may additionally expose `tool.discover`. Results are digest-verified, bounded,
+provenanced, cached, and added monotonically. Execution has turn, timeout, retrieval-volume, token,
+and cancellation bounds and never runs shell commands.
+
+> Transparent proxying can only remove transformations proven equivalent from the native request
+> alone. Meaningful context omission requires managed integration or a participating client.
 
 ## Security and privacy
 
@@ -143,11 +193,30 @@ built-in fallback is a conservative UTF-8 byte estimate and is never labeled exa
 reduction, cached input, billed usage, recovery overhead, retries, output tokens, and reasoning
 tokens remain separate.
 
+The counter registry prefers a configured provider count call, then an official model tokenizer, a
+documented compatible tokenizer, and finally the conservative estimate. Count calls are optional,
+timeout-bounded, and digest-cached; they are not generation calls or included in generation usage.
+The implementation follows Anthropic's `POST /v1/messages/count_tokens` semantics (a model-specific
+estimate that may differ slightly from creation usage) and Gemini's
+`models/{model}:countTokens` semantics (the full `generateContentRequest` is needed to include system
+instructions and tools). OpenAI generation responses are the authority for reported input, cached,
+output, and reasoning usage; no undocumented OpenAI preflight endpoint is claimed. See the official
+[Anthropic token-counting guide](https://platform.claude.com/docs/en/build-with-claude/token-counting),
+[Gemini countTokens reference](https://ai.google.dev/api/tokens), and
+[OpenAI Responses usage reference](https://platform.openai.com/docs/api-reference/responses).
+
 The JSONL evaluator executes baseline and optimized paths through the same deterministic recorded or
 fake provider, checks identical settings and responses, runs optional argv-safe evaluators, reports
 attempted versus effective tokens, and exits nonzero on regressions. Bundled cases cover provider
 shapes, history, repository selection, pytest output, and honest no-savings fallback. They do not
 establish real-provider parity. No fixed reduction is guaranteed.
+
+Managed evaluation counts initial and every continuation provider input. Retrieval request/result
+sizes, outputs, reasoning, and cache reports remain separate diagnostics. A managed case saves only
+when total provider input across all turns is lower than the full-context baseline and deterministic
+quality checks pass. `tests/fixtures/eval/managed.jsonl` contains long-history, repository, test-log,
+60-tool catalog, documentation, no-savings, and retrieval-heavy controls. These are recorded mock
+measurements, not real-provider quality claims.
 
 ### Bundled offline benchmark (Python 3.14.6)
 
@@ -171,6 +240,8 @@ Quality parity must be measured per workload.
 ## Limitations
 
 - Closed clients with no proxy, API, or plugin integration point cannot be optimized.
+- No reduction in Codex, Claude Code, Gemini CLI, or another closed client's subscription usage is
+  claimed; those integrations are not implemented or measured.
 - Provider tokenization varies by model; local estimates do not replace provider-reported usage.
 - Caching can lower billed input without lowering logical context.
 - `llmcut` does not bypass provider quotas or accounting.

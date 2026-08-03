@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0 - 2026-08-03
+
+- Added versioned provider-neutral managed requests, explicit retention/provenance semantics, and
+  separate canonical, model-bound, evidence, provider, and diagnostic serializations.
+- Added dependency-aware planning, stable-prefix construction, exact managed retrieval, checkpoint
+  history compaction, and task-scoped virtualization for large tool catalogs.
+- Added bounded multi-turn execution with complete usage accounting, sync/async Python clients,
+  managed CLI and local HTTP APIs, and provider-native continuation for existing adapters.
+- Added provider-aware counter registration, managed-only privacy-safe metrics, deterministic
+  managed evaluation, realistic saving/no-saving/retrieval-heavy controls, and security tests.
+
 ## 0.2.0 - 2026-08-03
 
 - Connected supported proxy routes to native conversion, optimization, semantic validation,

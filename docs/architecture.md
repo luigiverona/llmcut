@@ -7,6 +7,13 @@ kind/role, byte-exact content, source, SHA-256 digest, priority, dependencies, a
 recoverable evidence reference, and labeled token count. Provider-specific unknown fields live in a
 round-tripped passthrough map; adapters do not influence selection policy.
 
+Four representations are intentionally distinct: canonical state includes recovery data;
+model-bound serialization includes logical content only; adapters produce provider transport;
+evidence manifests and diagnostic reports serialize internal state independently. Adapters never
+read the evidence store. Token counters consume model-bound or final transport data, never canonical
+state JSON. The v0.2 canonical JSON loader remains supported and defaults missing retention to
+`required`.
+
 The pipeline is: validate policy, store the original request, remove only byte-identical blocks of
 the same semantic kind, store each unique block, make deterministic selection decisions, fail open
 below the confidence threshold, partition stable/dynamic content, label counts, and emit an
@@ -47,8 +54,12 @@ cacheability is not reported as actual cache use or logical reduction.
 Proxy flow is: resolve named configured provider, bound body, reject origin override, filter headers,
 inject credentials from the configured environment variable, apply timeout, and stream or return the
 upstream response. Streaming is backpressure-driven and closed on completion/cancellation.
-Transparent mode adds no tools. Managed integrations can explicitly obtain retrieval schemas, but
-must dispatch them through the recovery API themselves.
+Transparent mode adds no tools. Managed mode validates schema version 1, plans a working set, stores
+deferred evidence, generates only applicable retrieval schemas at the adapter boundary, calls the
+unchanged provider/model/settings, dispatches verified retrieval requests, appends exact results,
+and continues monotonically until completion or a configured bound. Large canonical tool registries
+use task-scoped initial selection and exact on-demand restoration. Stable policy/tools/project bytes
+are deterministic and separated from the dynamic suffix.
 
 ## Evaluation trade-offs
 

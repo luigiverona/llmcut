@@ -21,3 +21,16 @@ levels of nesting. Fixed fallback reasons contain no prompt content or evidence 
 metrics contain numeric/accounting metadata only. Transparent mode never injects retrieval tools.
 
 Tests use local ASGI transports and mock servers. CI needs no network or provider credentials.
+
+Managed endpoints share the proxy body and nesting bounds, use unguessable run identifiers, retain
+only bounded completed results in memory, and accept no request-provided credential fields. Optional
+bearer authentication compares values in constant time. Provider destinations still come only from
+configuration. Metrics contain modes, provider/model identifiers, numeric usage, timings, fallback,
+and quality state—not prompts, source, logs, retrieval content, or credentials.
+
+Managed evidence is untrusted text: it is never interpreted as configuration or executed. Retrieval
+resolves content-addressed identifiers rather than paths, rejects secret-marked/named evidence and
+stale revisions, bounds line ranges and result volume, rejects traversal by construction, and limits
+regex length and high-risk backtracking constructs. Identical calls are cached; repeated model calls
+are stopped. Cancellation and provider failures close the bounded loop without executing external
+capabilities.
