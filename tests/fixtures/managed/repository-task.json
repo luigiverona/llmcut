@@ -1,0 +1,14 @@
+{
+  "schema_version": "1",
+  "provider": "openai",
+  "model": "mock-same-model",
+  "settings": {"temperature": 0, "reasoning": {"effort": "high"}},
+  "task": {"content": "Fix callback.py timeout", "kind": "current"},
+  "context": [
+    {"id": "policy", "kind": "developer", "content": "Do not change the public interface.", "retention": "stable", "priority": 100},
+    {"id": "callback", "kind": "source", "source": "src/auth/callback.py", "content": "def callback(request):\n    timeout = settings.OAUTH_TIMEOUT\n    return exchange(request, timeout)\n", "retention": "recoverable", "priority": 80},
+    {"id": "unrelated", "kind": "source", "source": "src/reports/monthly.py", "content": "def render_report():\n    return monthly_totals()\n", "retention": "recoverable", "priority": 10}
+  ],
+  "tools": [],
+  "execution": {"integration": "managed", "optimization": "extreme", "max_turns": 4, "timeout_seconds": 30}
+}
