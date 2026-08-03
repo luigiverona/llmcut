@@ -25,7 +25,7 @@ class Policy:
 
     def validate(self) -> None:
         if self.mode is OptimizationMode.ECONOMY:
-            raise UnsupportedModeError("economy routing is defined but not implemented in v0.1.0")
+            raise UnsupportedModeError("economy routing is defined but not implemented in v0.2.0")
         if any(
             (
                 self.allow_lossy_context,
@@ -35,5 +35,5 @@ class Policy:
             )
         ):
             raise ValueError(
-                "v0.1.0 quality invariants prohibit lossy or capability-reducing policy"
+                "v0.2.0 quality invariants prohibit lossy or capability-reducing policy"
             )

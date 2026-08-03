@@ -13,7 +13,7 @@ runner = CliRunner()
 def test_help_and_version() -> None:
     assert runner.invoke(app, ["--help"]).exit_code == 0
     result = runner.invoke(app, ["--version"])
-    assert result.exit_code == 0 and "0.1.0" in result.stdout
+    assert result.exit_code == 0 and "0.2.0" in result.stdout
     for command in (
         "init",
         "inspect",

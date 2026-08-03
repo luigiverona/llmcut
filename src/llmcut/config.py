@@ -8,7 +8,7 @@ from typing import Any
 
 from llmcut.errors import ConfigurationError
 
-DEFAULT_CONFIG = """# llmcut v0.1.0 — generated safe defaults
+DEFAULT_CONFIG = """# llmcut v0.2.0 — generated safe defaults
 mode = "extreme"
 retention_days = 30
 persist_prompt_content = true
