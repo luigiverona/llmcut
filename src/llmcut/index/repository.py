@@ -4,11 +4,14 @@ import json
 import mimetypes
 import os
 import subprocess
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
-from llmcut.index.symbols import parse_source
+from llmcut.index.symbols import PARSER_VERSION, SymbolRange, parse_source
 from llmcut.model import digest_bytes
+from llmcut.store.database import Database
 
 SECRET_NAMES = {".env", ".env.local", ".npmrc", ".pypirc", "credentials", "id_rsa", "id_ed25519"}
 VENDORED_PARTS = {"node_modules", "vendor", ".venv", "dist", "build"}
@@ -30,6 +33,7 @@ class FileRecord:
     vendored: bool = False
     lock_file: bool = False
     tests: list[str] = field(default_factory=list)
+    symbol_ranges: list[SymbolRange] = field(default_factory=list)
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -39,8 +43,14 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 class RepositoryIndex:
-    def __init__(self, repo: Path) -> None:
+    def __init__(self, repo: Path, state_dir: Path | None = None) -> None:
         self.repo = repo.resolve()
+        self.database = Database((state_dir or self.repo / ".llmcut") / "state.db")
+        self.database.initialize()
+        identity = _git(self.repo, "rev-parse", "--show-toplevel").stdout.strip() or str(self.repo)
+        self.repository_id = digest_bytes(identity.encode())
+        self.cache_hits = 0
+        self.cache_misses = 0
 
     def build(self, include_untracked: bool = False) -> list[FileRecord]:
         tracked = _git(self.repo, "ls-files", "-z")
@@ -57,6 +67,14 @@ class RepositoryIndex:
         status = {
             entry[3:]: entry[:2] for entry in status_result.stdout.split("\0") if len(entry) > 3
         }
+        staged = _git(self.repo, "ls-files", "-s", "-z")
+        blob_oids: dict[str, str] = {}
+        for entry in staged.stdout.split("\0"):
+            if "\t" in entry:
+                metadata, filename = entry.split("\t", 1)
+                fields = metadata.split()
+                if len(fields) >= 2:
+                    blob_oids[filename] = fields[1]
         records: list[FileRecord] = []
         for relative in sorted(paths):
             if not self._safe(relative):
@@ -64,29 +82,86 @@ class RepositoryIndex:
             path = self.repo / relative
             if path.is_symlink() or not path.is_file():
                 continue
+            clean = status.get(relative, "tracked") == "tracked"
+            cached = self._cached(relative, blob_oids.get(relative)) if clean else None
+            if cached is not None:
+                records.append(cached)
+                self.cache_hits += 1
+                continue
+            self.cache_misses += 1
             raw = path.read_bytes()
             binary = b"\0" in raw[:8192]
             content = "" if binary else raw.decode("utf-8", errors="replace")
             parsed = parse_source(relative, content) if not binary else parse_source(relative, "")
             language = _language(path)
-            records.append(
-                FileRecord(
-                    relative,
-                    len(raw),
-                    language,
-                    digest_bytes(raw),
-                    status.get(relative, "tracked"),
-                    parsed.imports,
-                    parsed.symbols,
-                    parsed.parser,
-                    binary,
-                    _generated(relative, content),
-                    bool(set(Path(relative).parts) & VENDORED_PARTS),
-                    path.name in LOCK_NAMES,
-                )
+            record = FileRecord(
+                relative,
+                len(raw),
+                language,
+                digest_bytes(raw),
+                status.get(relative, "tracked"),
+                parsed.imports,
+                parsed.symbols,
+                parsed.parser,
+                binary,
+                _generated(relative, content),
+                bool(set(Path(relative).parts) & VENDORED_PARTS),
+                path.name in LOCK_NAMES,
+                [],
+                parsed.ranges,
             )
+            records.append(record)
+            self._store(relative, blob_oids.get(relative), record)
+        self._remove_deleted(paths)
         self._associate_tests(records)
+        for record in records:
+            self._store(record.path, blob_oids.get(record.path), record)
         return records
+
+    def stats(self) -> dict[str, int]:
+        return {"cache_hits": self.cache_hits, "cache_misses": self.cache_misses}
+
+    def _cached(self, path: str, blob_oid: str | None) -> FileRecord | None:
+        if blob_oid is None:
+            return None
+        with self.database.connect() as db:
+            row = db.execute(
+                "SELECT record_json FROM repository_index WHERE repository_id=? "
+                "AND path=? AND blob_oid=? AND parser_version=?",
+                (self.repository_id, path, blob_oid, PARSER_VERSION),
+            ).fetchone()
+        return _record(json.loads(row[0])) if row else None
+
+    def _store(self, path: str, blob_oid: str | None, record: FileRecord) -> None:
+        with self.database.connect() as db:
+            db.execute(
+                "INSERT INTO repository_index VALUES(?,?,?,?,?,?) "
+                "ON CONFLICT(repository_id,path) DO UPDATE SET blob_oid=excluded.blob_oid,"
+                "parser_version=excluded.parser_version,record_json=excluded.record_json,"
+                "updated_at=excluded.updated_at",
+                (
+                    self.repository_id,
+                    path,
+                    blob_oid,
+                    PARSER_VERSION,
+                    json.dumps(asdict(record), sort_keys=True),
+                    int(time.time()),
+                ),
+            )
+
+    def _remove_deleted(self, current_paths: set[str]) -> None:
+        with self.database.connect() as db:
+            existing = {
+                row[0]
+                for row in db.execute(
+                    "SELECT path FROM repository_index WHERE repository_id=?", (self.repository_id,)
+                )
+            }
+            for path in existing - current_paths:
+                db.execute(
+                    "DELETE FROM repository_index WHERE repository_id=? AND path=?",
+                    (self.repository_id, path),
+                )
 
     def save(self, records: list[FileRecord], destination: Path) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -138,3 +213,9 @@ def _language(path: Path) -> str:
 
 def _generated(path: str, content: str) -> bool:
     return "generated" in Path(path).name.lower() or "@generated" in content[:500].lower()
+
+
+def _record(value: dict[str, Any]) -> FileRecord:
+    data = dict(value)
+    data["symbol_ranges"] = [SymbolRange(**item) for item in data.get("symbol_ranges", [])]
+    return FileRecord(**data)

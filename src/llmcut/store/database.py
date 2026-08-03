@@ -33,6 +33,16 @@ MIGRATIONS = [
     CREATE INDEX evidence_access_idx ON evidence(last_accessed);
     CREATE INDEX usage_run_idx ON usage(run_id);
     """,
+    """
+    CREATE TABLE repository_index(
+      repository_id TEXT NOT NULL, path TEXT NOT NULL, blob_oid TEXT,
+      parser_version TEXT NOT NULL, record_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(repository_id,path)
+    );
+    CREATE INDEX repository_index_blob_idx
+      ON repository_index(repository_id,blob_oid,parser_version);
+    """,
 ]
 
 

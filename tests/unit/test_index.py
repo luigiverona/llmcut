@@ -38,10 +38,10 @@ def test_git_scope_secrets_binary_symbols_imports_tests_and_changes(tmp_path: Pa
     assert ".env" not in paths and "ignored.py" not in paths
     assert next(x for x in records if x.path == "binary.bin").binary
     app = next(x for x in records if x.path == "app.py")
-    assert app.parser == "python-ast" and "OAuth" in app.symbols and "os" in app.imports
+    assert app.parser == "python-ast-v2" and "OAuth" in app.symbols and "os" in app.imports
     assert app.status != "tracked" and "test_app.py" in app.tests
     web = next(x for x in records if x.path == "web.ts")
-    assert web.parser == "javascript-conservative-lexical" and "callback" in web.symbols
+    assert web.parser == "tree-sitter-typescript-0.25" and "callback" in web.symbols
 
 
 def test_untracked_requires_explicit_and_symlink_skipped(tmp_path: Path) -> None:
@@ -60,4 +60,40 @@ def test_pack_is_deterministic_and_recoverable(tmp_path: Path) -> None:
     first = pack_repository(repo, records, "OAuth callback", store)
     second = pack_repository(repo, records, "OAuth callback", store)
     assert [x.id for x in first] == [x.id for x in second]
-    assert all(x.reference and store.get(x.reference.digest) == x.content for x in first)
+    assert all(x.reference and store.get(x.reference.digest) for x in first)
+
+
+def test_symbol_range_pack_reduces_realistic_irrelevant_module_content(tmp_path: Path) -> None:
+    repo = fixture_repo(tmp_path)
+    (repo / "app.py").write_text(
+        "import os\n\ndef oauth_callback():\n    return 'ok'\n\n"
+        + "def unrelated():\n    return 'noise'\n" * 200
+    )
+    git(repo, "add", "app.py")
+    records = RepositoryIndex(repo).build()
+    store = EvidenceStore(repo / ".llmcut")
+    blocks = pack_repository(repo, records, "Fix oauth_callback", store)
+    app = next(item for item in blocks if item.source == "app.py")
+    assert "oauth_callback" in app.content
+    assert app.metadata["range_selected"] is True
+    assert len(app.content) < len((repo / "app.py").read_text()) / 4
+    assert app.reference and "unrelated" in store.get(app.reference.digest)
+
+
+def test_incremental_cache_update_delete_and_rename(tmp_path: Path) -> None:
+    repo = fixture_repo(tmp_path)
+    first = RepositoryIndex(repo)
+    first.build()
+    assert first.cache_misses > 0
+    second = RepositoryIndex(repo)
+    second.build()
+    assert second.cache_hits > 0 and second.cache_misses == 0
+    (repo / "app.py").write_text("def changed(): pass\n")
+    changed = RepositoryIndex(repo)
+    changed_records = changed.build()
+    assert changed.cache_misses == 1
+    assert "changed" in next(item for item in changed_records if item.path == "app.py").symbols
+    git(repo, "mv", "web.ts", "renamed.ts")
+    renamed = RepositoryIndex(repo)
+    paths = {item.path for item in renamed.build()}
+    assert "renamed.ts" in paths and "web.ts" not in paths

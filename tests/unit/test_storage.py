@@ -17,7 +17,7 @@ def test_permissions_migrations_and_integrity(tmp_path: Path) -> None:
     assert (store.db.path.stat().st_mode & 0o777) == 0o600
     store.db.integrity_check()
     with store.db.connect() as db:
-        assert db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 1
+        assert db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 2
         assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
 
