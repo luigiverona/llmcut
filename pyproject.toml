@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llmcut"
+version = "0.1.0"
+description = "Provider-neutral, recoverable LLM context optimization and observability"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [{name = "llmcut contributors"}]
+dependencies = [
+  "httpx>=0.28,<1",
+  "starlette>=0.48,<1",
+  "typer>=0.16,<1",
+  "uvicorn>=0.35,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "hypothesis>=6.130",
+  "mypy>=1.17",
+  "pytest>=8.4",
+  "pytest-asyncio>=1.1",
+  "pytest-cov>=6.2",
+  "ruff>=0.12",
+]
+
+[project.scripts]
+llmcut = "llmcut.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/llmcut"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/.llmcut", "/.venv", "/.hypothesis", "/.pytest_cache", "/dist"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "S"]
+ignore = ["S101", "S603", "S607"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S104"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["llmcut"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
