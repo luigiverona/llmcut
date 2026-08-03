@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llmcut"
-version = "0.2.0"
+version = "0.3.0"
 description = "Provider-neutral, recoverable LLM context optimization and observability"
 readme = "README.md"
 license = "MIT"

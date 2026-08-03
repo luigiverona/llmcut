@@ -15,6 +15,9 @@ from starlette.routing import Route
 from llmcut.adapters import AnthropicAdapter, GeminiAdapter, OpenAIAdapter, adapter_for
 from llmcut.config import Config
 from llmcut.core.optimize import Optimizer
+from llmcut.errors import LlmcutError
+from llmcut.managed.protocol import ManagedRequest
+from llmcut.managed.runtime import ManagedRuntime
 from llmcut.policy import OptimizationMode
 from llmcut.proxy.optimize import NativeOptimization, optimize_native
 from llmcut.proxy.security import filtered_headers, upstream_url
@@ -26,6 +29,7 @@ def create_app(config: Config) -> Starlette:
     evidence = EvidenceStore(config.state_dir, persist_content=config.persist_prompt_content)
     metrics = MetricsStore(evidence.db)
     optimizer = Optimizer(evidence)
+    completed_runs: dict[str, dict[str, object]] = {}
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
@@ -36,12 +40,102 @@ def create_app(config: Config) -> Starlette:
     async def health(_: Request) -> Response:
         try:
             evidence.db.integrity_check()
-            return JSONResponse({"status": "ok", "version": "0.2.0"})
+            from llmcut import __version__
+
+            return JSONResponse({"status": "ok", "version": __version__})
         except Exception:
             return JSONResponse({"status": "degraded"}, status_code=503)
 
     async def stats(_: Request) -> Response:
         return JSONResponse(metrics.summary())
+
+    async def managed(request: Request) -> Response:
+        auth_error = _managed_auth(request, config)
+        if auth_error is not None:
+            return auth_error
+        body = await request.body()
+        if len(body) > config.max_request_bytes:
+            return JSONResponse(
+                {"error": {"message": "request body exceeds configured limit"}}, status_code=413
+            )
+        try:
+            payload = _bounded_json_body(body)
+            managed_request = ManagedRequest.from_dict(payload)
+
+            async def provider_call(
+                kind: str, native: dict[str, object], timeout: float
+            ) -> dict[str, object]:
+                providers = [item for item in config.providers.values() if item.kind == kind]
+                if len(providers) != 1:
+                    raise ValueError("managed provider must resolve to one configured upstream")
+                provider = providers[0]
+                headers = dict(provider.headers)
+                credential = (
+                    os.environ.get(provider.credential_env) if provider.credential_env else None
+                )
+                if credential:
+                    if kind == "anthropic":
+                        headers["x-api-key"] = credential
+                    elif kind == "gemini":
+                        headers["x-goog-api-key"] = credential
+                    else:
+                        headers["authorization"] = f"Bearer {credential}"
+                client: httpx.AsyncClient = request.app.state.client
+                response = await client.post(
+                    provider.base_url, json=native, headers=headers, timeout=timeout
+                )
+                response.raise_for_status()
+                value = response.json()
+                if not isinstance(value, dict):
+                    raise ValueError("provider response must be an object")
+                return value
+
+            runtime = ManagedRuntime(evidence, provider_call)
+            result = await runtime.run(managed_request, dry_run=request.url.path == "/managed/plan")
+            rendered = result.to_dict()
+            usage = result.usage
+            metrics.record_managed(
+                {
+                    "id": result.run_id,
+                    "integration_mode": "managed",
+                    "optimization_mode": managed_request.execution.optimization.value,
+                    "provider": result.provider,
+                    "model": result.model,
+                    "baseline_tokens": usage.baseline_input_tokens,
+                    "initial_tokens": usage.initial_input_tokens,
+                    "retrieval_request_tokens": usage.retrieval_request_tokens,
+                    "retrieval_result_tokens": usage.retrieval_result_tokens,
+                    "continuation_tokens": usage.continuation_input_tokens,
+                    "total_effective_tokens": usage.total_input_tokens,
+                    "output_tokens": usage.output_tokens,
+                    "reasoning_tokens": usage.reasoning_tokens,
+                    "cached_tokens": usage.cached_tokens,
+                    "count_quality": usage.count_quality,
+                    "planning_seconds": result.planning_seconds,
+                    "provider_seconds": result.provider_seconds,
+                    "retrieval_count": len(result.retrievals),
+                    "fallback": int(result.fallback is not None),
+                    "quality_state": "not_evaluated",
+                    "completed": int(result.status == "completed"),
+                }
+            )
+            completed_runs[result.run_id] = rendered
+            if len(completed_runs) > 128:
+                completed_runs.pop(next(iter(completed_runs)))
+            return JSONResponse(rendered)
+        except (LlmcutError, ValueError, TypeError, KeyError) as exc:
+            return JSONResponse(
+                {"error": {"message": str(exc), "type": "managed_request_error"}}, status_code=400
+            )
+
+    async def managed_run_status(request: Request) -> Response:
+        auth_error = _managed_auth(request, config)
+        if auth_error is not None:
+            return auth_error
+        value = completed_runs.get(request.path_params["run_id"])
+        if value is None:
+            return JSONResponse({"error": {"message": "managed run not found"}}, status_code=404)
+        return JSONResponse(value)
 
     async def forward(request: Request) -> Response:
         provider_name = request.path_params["provider"]
@@ -165,11 +259,44 @@ def create_app(config: Config) -> Starlette:
     routes = [
         Route("/health", health),
         Route("/metrics", stats),
+        Route("/managed/run", managed, methods=["POST"]),
+        Route("/managed/plan", managed, methods=["POST"]),
+        Route("/managed/runs/{run_id}", managed_run_status, methods=["GET"]),
         Route(
             "/{provider}/{path:path}", forward, methods=["GET", "POST", "PUT", "PATCH", "DELETE"]
         ),
     ]
     return Starlette(routes=routes, lifespan=lifespan)
+
+
+def _bounded_json_body(body: bytes, max_depth: int = 64) -> dict[str, object]:
+    value = json.loads(body)
+    if not isinstance(value, dict):
+        raise ValueError("managed request must be a JSON object")
+    stack: list[tuple[object, int]] = [(value, 1)]
+    while stack:
+        item, depth = stack.pop()
+        if depth > max_depth:
+            raise ValueError("managed request nesting exceeds safety limit")
+        if isinstance(item, dict):
+            stack.extend((child, depth + 1) for child in item.values())
+        elif isinstance(item, list):
+            stack.extend((child, depth + 1) for child in item)
+    return value
+
+
+def _managed_auth(request: Request, config: Config) -> JSONResponse | None:
+    expected = os.environ.get(config.managed_bearer_token_env)
+    if expected is None:
+        return None
+    import hmac
+
+    supplied = request.headers.get("authorization", "")
+    if not supplied.startswith("Bearer ") or not hmac.compare_digest(supplied[7:], expected):
+        return JSONResponse(
+            {"error": {"message": "managed endpoint authentication failed"}}, status_code=401
+        )
+    return None
 
 
 def _stream_requested(body: bytes, path: str) -> bool:

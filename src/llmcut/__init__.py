@@ -1,3 +1,8 @@
 """Recoverable context optimization for LLM applications."""
 
-__version__ = "0.2.0"
+from llmcut.client import AsyncClient, Client
+from llmcut.managed.protocol import Context, ManagedRequest, ToolDefinition
+
+__version__ = "0.3.0"
+
+__all__ = ["AsyncClient", "Client", "Context", "ManagedRequest", "ToolDefinition", "__version__"]

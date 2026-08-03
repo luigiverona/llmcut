@@ -19,6 +19,21 @@ class BlockKind(StrEnum):
     REPOSITORY = "repository"
     COMMAND_OUTPUT = "command_output"
     CHECKPOINT = "checkpoint"
+    SOURCE = "source"
+    REPOSITORY_MAP = "repository_map"
+    CONFIGURATION = "configuration"
+    TEST = "test"
+    DOCUMENT = "document"
+    CURRENT_TASK = "current_task"
+
+
+class Retention(StrEnum):
+    REQUIRED = "required"
+    STABLE = "stable"
+    RECOVERABLE = "recoverable"
+    SUPERSEDED = "superseded"
+    REDUNDANT = "redundant"
+    EPHEMERAL = "ephemeral"
 
 
 class CountQuality(StrEnum):
@@ -60,6 +75,7 @@ class ContextBlock:
     reference: EvidenceReference | None = None
     tokens: TokenCount | None = None
     digest: str = ""
+    retention: Retention = Retention.REQUIRED
 
     def __post_init__(self) -> None:
         actual = digest_bytes(self.content.encode())
@@ -87,16 +103,60 @@ class CanonicalRequest:
     request_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize complete canonical state (v0.2-compatible representation)."""
         return asdict(self)
 
     def to_json(self) -> str:
+        """Serialize canonical state, including recovery metadata.
+
+        Provider adapters and token counters must use ``model_bound_*`` instead.
+        """
         return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+
+    def model_bound_dict(self) -> dict[str, Any]:
+        """Return provider-neutral logical content without llmcut internal state."""
+
+        def public(block: ContextBlock) -> dict[str, Any]:
+            return {"id": block.id, "kind": block.kind.value, "content": block.content}
+
+        return {
+            "blocks": [public(item) for item in self.blocks],
+            "tools": [public(item) for item in self.tools],
+            "model": {
+                "provider": self.model.provider,
+                "model": self.model.model,
+                "parameters": self.model.parameters,
+                "reasoning": self.model.reasoning,
+                "token_budget": self.model.token_budget,
+            },
+        }
+
+    def model_bound_json(self) -> str:
+        return json.dumps(self.model_bound_dict(), sort_keys=True, separators=(",", ":"))
+
+    def evidence_manifest_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": "1",
+            "request_id": self.request_id,
+            "evidence": [
+                {
+                    "id": item.id,
+                    "digest": item.reference.digest if item.reference else item.digest,
+                    "source": item.reference.source if item.reference else item.source,
+                    "revision": item.reference.revision if item.reference else None,
+                    "dependencies": list(item.dependencies),
+                    "retention": item.retention.value,
+                }
+                for item in [*self.blocks, *self.tools]
+            ],
+        }
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> CanonicalRequest:
         def block(item: dict[str, Any]) -> ContextBlock:
             data = dict(item)
             data["kind"] = BlockKind(data["kind"])
+            data["retention"] = Retention(data.get("retention", "required"))
             if data.get("reference"):
                 data["reference"] = EvidenceReference(**data["reference"])
             if data.get("tokens"):

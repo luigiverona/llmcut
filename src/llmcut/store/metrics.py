@@ -36,12 +36,17 @@ class MetricsStore:
                 "attempted_tokens "
                 "FROM request_metrics"
             ).fetchall()
+            managed_rows = conn.execute(
+                "SELECT baseline_tokens,initial_tokens,retrieval_request_tokens,"
+                "retrieval_result_tokens,continuation_tokens,total_effective_tokens,"
+                "fallback,quality_state,completed FROM managed_metrics"
+            ).fetchall()
         original, optimized = row[1] or 0, row[2] or 0
         reduction = ((original - optimized) / original * 100) if original else None
         reductions = sorted(
             ((item[0] - item[1]) / item[0] * 100) if item[0] else 0.0 for item in request_rows
         )
-        return {
+        result: dict[str, int | float | None] = {
             "runs": row[0],
             "original_input_tokens": original,
             "optimized_input_tokens": optimized,
@@ -63,6 +68,38 @@ class MetricsStore:
             ),
             "unvalidated_requests": sum(item[3] is None for item in request_rows),
         }
+        total_reductions = sorted(
+            (row[0] - row[5]) / row[0] * 100 for row in managed_rows if row[0]
+        )
+        initial_reductions = sorted(
+            (row[0] - row[1]) / row[0] * 100 for row in managed_rows if row[0]
+        )
+        retrieval = sum(row[2] + row[3] for row in managed_rows)
+        managed_total = sum(row[5] for row in managed_rows)
+        result.update(
+            {
+                "median_total_reduction": _percentile(total_reductions, 0.5),
+                "median_initial_reduction": _percentile(initial_reductions, 0.5),
+                "retrieval_overhead_rate": _rate(retrieval, managed_total),
+                "managed_completion_rate": _rate(
+                    sum(row[8] for row in managed_rows), len(managed_rows)
+                ),
+                "managed_fallback_rate": _rate(
+                    sum(row[6] for row in managed_rows), len(managed_rows)
+                ),
+                "quality_validated_saving_rate": _rate(
+                    sum(
+                        bool(row[0]) and row[5] < row[0] and row[7] == "passed"
+                        for row in managed_rows
+                    ),
+                    len(managed_rows),
+                ),
+                "transparent_saving_rate": _rate(
+                    sum(item[1] < item[0] for item in request_rows), len(request_rows)
+                ),
+            }
+        )
+        return result
 
     def record_request(self, values: dict[str, Any]) -> str:
         identifier = str(uuid.uuid4())
@@ -94,6 +131,41 @@ class MetricsStore:
         with self.db.connect() as conn:
             conn.execute(
                 sql, (identifier, *(values.get(key, 0) for key in columns), int(time.time()))
+            )
+        return identifier
+
+    def record_managed(self, values: dict[str, Any]) -> str:
+        identifier = str(values.get("id") or uuid.uuid4().hex)
+        columns = (
+            "integration_mode",
+            "optimization_mode",
+            "provider",
+            "model",
+            "baseline_tokens",
+            "initial_tokens",
+            "retrieval_request_tokens",
+            "retrieval_result_tokens",
+            "continuation_tokens",
+            "total_effective_tokens",
+            "output_tokens",
+            "reasoning_tokens",
+            "cached_tokens",
+            "count_quality",
+            "planning_seconds",
+            "provider_seconds",
+            "retrieval_count",
+            "fallback",
+            "quality_state",
+            "completed",
+        )
+        placeholders = ",".join("?" for _ in range(len(columns) + 2))
+        statement = (
+            f"INSERT INTO managed_metrics(id,{','.join(columns)},created_at) VALUES({placeholders})"
+        )
+        with self.db.connect() as conn:
+            conn.execute(
+                statement,  # noqa: S608
+                (identifier, *(values.get(key, 0) for key in columns), int(time.time())),
             )
         return identifier
 

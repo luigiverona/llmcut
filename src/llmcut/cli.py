@@ -16,6 +16,8 @@ from llmcut.core.optimize import Optimizer
 from llmcut.core.recover import Recovery
 from llmcut.errors import LlmcutError
 from llmcut.index import RepositoryIndex, pack_repository
+from llmcut.managed.protocol import ManagedRequest
+from llmcut.managed.runtime import ManagedRuntime
 from llmcut.model import CanonicalRequest, ModelConfiguration
 from llmcut.policy import OptimizationMode, Policy
 from llmcut.proxy.app import create_app
@@ -143,6 +145,28 @@ def optimize(
     typer.echo(json.dumps(result, indent=2))
 
 
+@app.command("run")
+def managed_run(
+    request_file: Annotated[Path, typer.Option("--request")],
+    repo: Annotated[Path, typer.Option("--repo")] = Path("."),
+    mode: Annotated[OptimizationMode, typer.Option("--mode")] = OptimizationMode.EXTREME,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+) -> None:
+    """Plan or execute a versioned provider-neutral managed request."""
+    request = ManagedRequest.from_dict(json.loads(request_file.read_text()))
+    request.execution.optimization = mode
+    store = _store(repo)
+    if dry_run:
+        import asyncio
+
+        result = asyncio.run(ManagedRuntime(store).run(request, dry_run=True))
+    else:
+        from llmcut.client import Client
+
+        result = Client.from_config(repo).run(request, mode.value)
+    typer.echo(json.dumps(result.to_dict(), indent=2))
+
+
 @app.command()
 def proxy(
     repo: Annotated[Path, typer.Option("--repo")] = Path("."),
@@ -234,6 +258,40 @@ def evaluate(
     minimum_reduction: Annotated[float, typer.Option("--minimum-reduction")] = 0.0,
 ) -> None:
     """Execute deterministic baseline-versus-optimized offline evaluations."""
+    first = next((line for line in corpus.read_text().splitlines() if line.strip()), "")
+    if first and "managed_request" in json.loads(first):
+        import asyncio
+
+        from llmcut.eval.managed import evaluate_recorded_corpus, release_targets
+
+        store = _store(repo)
+        managed_results = asyncio.run(
+            evaluate_recorded_corpus(corpus, lambda provider: ManagedRuntime(store, provider))
+        )
+        targets = release_targets(managed_results)
+        rendered = [
+            {
+                "task_id": item.task_id,
+                "baseline_tokens": item.baseline_tokens,
+                "initial_tokens": item.initial_tokens,
+                "retrieval_tokens": item.retrieval_tokens,
+                "continuation_tokens": item.continuation_tokens,
+                "total_tokens": item.total_tokens,
+                "output_tokens": item.output_tokens,
+                "cached_tokens": item.cached_tokens,
+                "reduction_percent": round(item.reduction_percent, 4),
+                "retrievals": item.retrievals,
+                "turns": item.turns,
+                "quality_passed": item.quality_passed,
+                "saving": item.saving,
+                "fallback": item.fallback,
+            }
+            for item in managed_results
+        ]
+        typer.echo(json.dumps({"cases": rendered, "targets": targets}, indent=2))
+        if not targets["passed"]:
+            raise typer.Exit(1)
+        return
     from llmcut.eval.corpus import read_corpus
     from llmcut.eval.runner import run_case
     from llmcut.tokens.estimate import ConservativeEstimator
@@ -376,7 +434,7 @@ def _execute_recorded(
     value: CanonicalRequest, *, response: dict[str, Any], estimator: Any
 ) -> tuple[dict[str, Any], dict[str, int]]:
     return dict(response), {
-        "input_tokens": estimator.count(value.to_json(), model=value.model.model).value,
+        "input_tokens": estimator.count(value.model_bound_json(), model=value.model.model).value,
         "output_tokens": estimator.count(json.dumps(response)).value,
         "cached_tokens": 0,
         "recovery_tokens": 0,

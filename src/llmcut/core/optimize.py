@@ -74,8 +74,12 @@ class Optimizer:
             working.request_id,
         )
         optimized.passthrough["llmcut_original"] = original_ref.digest
-        original_count = self.counter.count(original_json, model=working.model.model)
-        optimized_count = self.counter.count(optimized.to_json(), model=working.model.model)
+        # Logical counts cover only content that can cross the adapter boundary. Evidence,
+        # decisions, references, token annotations, and recovery state are deliberately excluded.
+        original_count = self.counter.count(request.model_bound_json(), model=working.model.model)
+        optimized_count = self.counter.count(
+            optimized.model_bound_json(), model=working.model.model
+        )
         report.original_tokens = original_count.value
         report.optimized_tokens = optimized_count.value
         report.attempted_tokens = optimized_count.value

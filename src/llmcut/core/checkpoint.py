@@ -16,6 +16,7 @@ class Checkpoint:
     objective: str
     constraints: list[str] = field(default_factory=list)
     decisions: list[str] = field(default_factory=list)
+    rejected_alternatives: list[str] = field(default_factory=list)
     rationale: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
     changed_files: list[str] = field(default_factory=list)

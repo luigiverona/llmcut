@@ -58,6 +58,21 @@ MIGRATIONS = [
     );
     CREATE INDEX request_metrics_created_idx ON request_metrics(created_at);
     """,
+    """
+    CREATE TABLE managed_metrics(
+      id TEXT PRIMARY KEY, integration_mode TEXT NOT NULL, optimization_mode TEXT NOT NULL,
+      provider TEXT NOT NULL, model TEXT NOT NULL, baseline_tokens INTEGER,
+      initial_tokens INTEGER NOT NULL, retrieval_request_tokens INTEGER NOT NULL,
+      retrieval_result_tokens INTEGER NOT NULL, continuation_tokens INTEGER NOT NULL,
+      total_effective_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+      reasoning_tokens INTEGER NOT NULL, cached_tokens INTEGER NOT NULL,
+      count_quality TEXT NOT NULL, planning_seconds REAL NOT NULL,
+      provider_seconds REAL NOT NULL, retrieval_count INTEGER NOT NULL,
+      fallback INTEGER NOT NULL, quality_state TEXT NOT NULL, completed INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX managed_metrics_created_idx ON managed_metrics(created_at);
+    """,
 ]
 
 

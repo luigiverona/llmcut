@@ -11,6 +11,11 @@ class OptimizationMode(StrEnum):
     ECONOMY = "economy"
 
 
+class IntegrationMode(StrEnum):
+    TRANSPARENT = "transparent"
+    MANAGED = "managed"
+
+
 @dataclass(frozen=True, slots=True)
 class Policy:
     mode: OptimizationMode = OptimizationMode.EXTREME

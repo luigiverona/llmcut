@@ -8,7 +8,7 @@ from typing import Any
 
 from llmcut.errors import ConfigurationError
 
-DEFAULT_CONFIG = """# llmcut v0.2.0 — generated safe defaults
+DEFAULT_CONFIG = """# llmcut v0.3.0 — generated safe defaults
 mode = "extreme"
 retention_days = 30
 persist_prompt_content = true
@@ -20,6 +20,7 @@ max_request_bytes = 10485760
 timeout_seconds = 120.0
 diagnostic_headers = true
 integration_mode = "transparent"
+managed_bearer_token_env = "LLMCUT_MANAGED_TOKEN"
 
 [modes.extreme]
 quality_floor = "baseline"
@@ -58,6 +59,7 @@ class Config:
     retention_days: int = 30
     persist_prompt_content: bool = True
     providers: dict[str, ProviderConfig] = field(default_factory=dict)
+    managed_bearer_token_env: str = "LLMCUT_MANAGED_TOKEN"  # noqa: S105 -- environment name
 
 
 def load_config(project: Path | None = None, overrides: dict[str, Any] | None = None) -> Config:
@@ -112,6 +114,7 @@ def load_config(project: Path | None = None, overrides: dict[str, Any] | None = 
         retention_days=int(merged.get("retention_days", 30)),
         persist_prompt_content=bool(merged.get("persist_prompt_content", True)),
         providers=provider_configs,
+        managed_bearer_token_env=str(proxy.get("managed_bearer_token_env", "LLMCUT_MANAGED_TOKEN")),
     )
     if config.max_request_bytes < 1 or config.timeout_seconds <= 0:
         raise ConfigurationError("proxy size and timeout limits must be positive")

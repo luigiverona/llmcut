@@ -12,3 +12,15 @@ class ConfigurationError(LlmcutError):
 
 class UnsupportedModeError(ConfigurationError):
     """A declared but unavailable mode was selected."""
+
+
+class ProtocolError(LlmcutError, ValueError):
+    """A managed request violates the versioned protocol or policy."""
+
+
+class RetrievalError(LlmcutError):
+    """A managed retrieval operation was invalid or unsafe."""
+
+
+class ExecutionError(LlmcutError):
+    """A bounded managed execution could not complete safely."""

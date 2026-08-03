@@ -186,8 +186,16 @@ def _kind_role(kind: BlockKind) -> str:
 
 
 def _public_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    internal = {
+        "native_content",
+        "dedupe_safe",
+        "revision",
+        "confidence",
+        "task_irrelevant",
+        "proven_redundant",
+        "represented_by_verified_structure",
+        "superseded",
+    }
     return {
-        key: value
-        for key, value in metadata.items()
-        if key not in {"native_content", "dedupe_safe"}
+        key: value for key, value in metadata.items() if key not in internal and value is not None
     }

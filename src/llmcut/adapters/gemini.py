@@ -79,6 +79,11 @@ class GeminiAdapter(ProviderAdapter):
             for key, value in request.passthrough.items()
             if key not in {"llmcut_original", "gemini_other_tools"}
         }
+        # Managed transports need the unchanged model identifier because they do not inherit a
+        # provider-native URL path from a transparent caller. Configured transports may move this
+        # value into the Gemini route at the final HTTP boundary.
+        if request.model.model:
+            payload["model"] = request.model.model
         systems = [
             block
             for block in request.blocks
