@@ -86,14 +86,14 @@ def test_modes_make_distinct_non_lossy_decisions(tmp_path: Path) -> None:
             ContextBlock(
                 "r",
                 BlockKind.REPOSITORY,
-                "old",
+                "old repository evidence " * 1000,
                 "repo",
                 metadata={"task_irrelevant": True, "confidence": "high"},
             ),
             ContextBlock(
                 "c",
                 BlockKind.CHECKPOINT,
-                "old checkpoint",
+                "old superseded checkpoint " * 1000,
                 "history",
                 metadata={"superseded": True},
             ),
@@ -130,8 +130,7 @@ def test_recovery_dependencies_and_missing_original(tmp_path: Path) -> None:
     canonical = request([parent, dep])
     recovery = Recovery(store)
     assert recovery.dependencies(canonical, "parent") == ["dependency body"]
-    with pytest.raises(KeyError):
-        recovery.restore_request(canonical)
+    assert recovery.restore_request(canonical).to_json() == canonical.to_json()
 
 
 def test_command_virtualization_never_hides_failure_warning_or_skip(tmp_path: Path) -> None:

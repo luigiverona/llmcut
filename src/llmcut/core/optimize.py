@@ -25,6 +25,7 @@ class Optimizer:
         policy.validate()
         original_json = request.to_json()
         working = CanonicalRequest.from_dict(request.to_dict())
+        fallback_request = CanonicalRequest.from_dict(request.to_dict())
         original_ref = self.evidence.put(
             original_json, f"request:{request.request_id or 'anonymous'}"
         )
@@ -85,4 +86,9 @@ class Optimizer:
         report.stable_tokens = self.counter.count("".join(partitions[:3])).value
         report.dynamic_tokens = self.counter.count("".join(partitions[3:])).value
         report.potential_cacheable_tokens = report.stable_tokens
+        if optimized_count.value >= original_count.value:
+            report.effective_tokens = original_count.value
+            report.fallback_reason = "attempted optimization was not smaller"
+            report.fallback = "original_request"
+            return fallback_request, report
         return optimized, report

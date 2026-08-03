@@ -34,7 +34,8 @@ class Recovery:
     def restore_request(self, optimized: CanonicalRequest) -> CanonicalRequest:
         digest = optimized.passthrough.get("llmcut_original")
         if not isinstance(digest, str):
-            raise KeyError("optimized request has no original evidence reference")
+            # Size-aware fallback returns the untouched canonical request; it is already restored.
+            return CanonicalRequest.from_dict(optimized.to_dict())
         import json
 
         return CanonicalRequest.from_dict(json.loads(self.evidence(digest)))
