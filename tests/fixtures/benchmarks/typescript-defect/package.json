@@ -1,0 +1,10 @@
+{
+  "name": "llmcut-typescript-defect-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "basedpyright src tests",
+    "test": "node --test tests/timeout.test.ts"
+  }
+}

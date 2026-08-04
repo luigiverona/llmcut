@@ -12,8 +12,8 @@ id = "typescript-defect"
 repository = "typescript-defect"
 patch = "expected.patch"
 task = "Fix src/timeout.ts millisecond conversion"
-required = ["src/timeout.ts", "src/config.ts", "tests/validate.py"]
-validation = ["python", "tests/validate.py"]
+required = ["src/timeout.ts", "src/config.ts", "tests/timeout.test.ts", "package-lock.json"]
+validation = ["basedpyright", "src", "tests"]
 allowed_changes = ["src/timeout.ts"]
 
 [[tasks]]
