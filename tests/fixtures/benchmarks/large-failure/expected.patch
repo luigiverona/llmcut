@@ -1,0 +1,8 @@
+diff --git a/app/parser.py b/app/parser.py
+index 75a1f83..e8b8c35 100644
+--- a/app/parser.py
++++ b/app/parser.py
+@@ -1,2 +1,2 @@
+ def parse_status(value: str) -> str:
+-    return value
++    return value.strip().lower()

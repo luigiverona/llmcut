@@ -1,0 +1,8 @@
+diff --git a/app/worker.py b/app/worker.py
+index 9593e81..b093c66 100644
+--- a/app/worker.py
++++ b/app/worker.py
+@@ -1,2 +1,2 @@
+ def attempts() -> int:
+-    return 2
++    return 3

@@ -1,0 +1,73 @@
+[[tasks]]
+id = "python-defect"
+repository = "python-defect"
+patch = "expected.patch"
+task = "Fix app/callback.py timeout units and preserve validation"
+required = ["app/callback.py", "app/config.py", "tests/validate_callback.py"]
+validation = ["python", "tests/validate_callback.py"]
+allowed_changes = ["app/callback.py"]
+
+[[tasks]]
+id = "typescript-defect"
+repository = "typescript-defect"
+patch = "expected.patch"
+task = "Fix src/timeout.ts millisecond conversion"
+required = ["src/timeout.ts", "src/config.ts", "tests/validate.py"]
+validation = ["python", "tests/validate.py"]
+allowed_changes = ["src/timeout.ts"]
+
+[[tasks]]
+id = "configuration-change"
+repository = "config-change"
+patch = "expected.patch"
+task = "Move the default region to ca-central-1 across application configuration and docs"
+required = ["app/settings.py", "config.json", "docs/deployment.md", "tests/validate.py"]
+validation = ["python", "tests/validate.py"]
+allowed_changes = ["app/settings.py", "config.json", "docs/deployment.md"]
+
+[[tasks]]
+id = "large-test-failure"
+repository = "large-failure"
+patch = "expected.patch"
+task = "Fix parse_status using the failing test evidence"
+required = ["app/parser.py", "tests/validate.py", "test-output.log"]
+validation = ["python", "tests/validate.py"]
+allowed_changes = ["app/parser.py"]
+
+[[tasks]]
+id = "long-coding-history"
+repository = "history"
+patch = "expected.patch"
+task = "Complete the worker retry change from the verified checkpoint"
+required = ["app/worker.py", "tests/validate.py", "checkpoint.md"]
+validation = ["python", "tests/validate.py"]
+allowed_changes = ["app/worker.py"]
+
+[[tasks]]
+id = "no-savings-control"
+repository = "python-defect"
+patch = "expected.patch"
+task = "Fix callback timeout"
+required = ["app/callback.py", "app/config.py", "app/reporting.py", "tests/validate_callback.py"]
+validation = ["python", "tests/validate_callback.py"]
+allowed_changes = ["app/callback.py"]
+no_savings = true
+
+[[tasks]]
+id = "large-tool-catalog"
+repository = "tool-catalog"
+patch = "expected.patch"
+task = "Fix the issue key formatter using repository and issue capabilities"
+required = ["app/formatter.py", "tests/validate.py"]
+validation = ["python", "tests/validate.py"]
+allowed_changes = ["app/formatter.py"]
+
+[[tasks]]
+id = "retrieval-heavy-control"
+repository = "history"
+patch = "expected.patch"
+task = "Complete the worker retry change after retrieving the full history"
+required = ["app/worker.py"]
+retrieve = ["tests/validate.py", "checkpoint.md", "history.log"]
+validation = ["python", "tests/validate.py"]
+allowed_changes = ["app/worker.py"]

@@ -1,0 +1,10 @@
+diff --git a/app/callback.py b/app/callback.py
+index 3f468fb..638bffa 100644
+--- a/app/callback.py
++++ b/app/callback.py
+@@ -2,4 +2,4 @@ from app.config import TIMEOUT_SECONDS
+ 
+ 
+ def callback_timeout() -> int:
+-    return TIMEOUT_SECONDS * 1000
++    return TIMEOUT_SECONDS

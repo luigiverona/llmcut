@@ -1,0 +1,11 @@
+============================= test session starts ==============================
+collected 428 items
+tests/unit/test_accounts.py ........................................ PASSED
+tests/unit/test_billing.py ......................................... PASSED
+tests/unit/test_exports.py ......................................... PASSED
+tests/integration/test_legacy.py ssssssssssssssssssssssssssssssssssss SKIPPED
+WARNING deprecated configuration option legacy_retry is still present
+WARNING timezone-naive fixture will be removed in a future version
+tests/unit/test_parser.py::test_normalizes_status FAILED
+E AssertionError: assert ' READY ' == 'ready'
+================= 1 failed, 391 passed, 36 skipped, 2 warnings =================

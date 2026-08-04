@@ -1,0 +1,9 @@
+Repository inspection began with a complete inventory of source, tests, configuration, and docs.
+The first attempt changed the queue visibility timeout and failed because it altered scheduling.
+The second attempt added an unbounded loop and was rejected by the safety review. Test output then
+showed 208 passing cases, 12 skipped integration cases, three deprecation warnings, and one failure
+in the worker attempt-count assertion. A reviewer accepted a narrow constant change, asked that
+backoff remain identical, required the full validation command, and prohibited unrelated edits.
+Further command output repeated package discovery, environment details, dependency versions,
+coverage tables, cache diagnostics, type-checking progress, lint rule names, and build metadata.
+All of this remains exact recoverable evidence behind the checkpoint for managed retrieval.

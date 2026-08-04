@@ -1,0 +1,8 @@
+diff --git a/app/formatter.py b/app/formatter.py
+index 4927b03..c789c84 100644
+--- a/app/formatter.py
++++ b/app/formatter.py
+@@ -1,2 +1,2 @@
+ def issue_key(project: str, number: int) -> str:
+-    return f"{project}_{number}"
++    return f"{project}-{number}"

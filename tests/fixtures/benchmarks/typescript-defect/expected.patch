@@ -1,0 +1,11 @@
+diff --git a/src/timeout.ts b/src/timeout.ts
+index 8584401..6caf00a 100644
+--- a/src/timeout.ts
++++ b/src/timeout.ts
+@@ -1,5 +1,5 @@
+ import { timeoutSeconds } from "./config";
+ 
+ export function timeoutMilliseconds(): number {
+-  return timeoutSeconds;
++  return timeoutSeconds * 1000;
+ }
