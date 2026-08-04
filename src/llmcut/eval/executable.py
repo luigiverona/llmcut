@@ -159,7 +159,8 @@ def _payloads(
         for path in sorted(fixture.rglob("*"))
         if path.is_file()
         and path.name != str(value["patch"])
-        and not {".git", ".llmcut"} & set(path.relative_to(fixture).parts)
+        and path.suffix != ".pyc"
+        and not {".git", ".llmcut", "__pycache__"} & set(path.relative_to(fixture).parts)
     ]
     contexts = [
         Context(
