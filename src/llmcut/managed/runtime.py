@@ -13,10 +13,12 @@ from llmcut.errors import ExecutionError, RetrievalError
 from llmcut.managed.planner import ContextPlan, ContextPlanner
 from llmcut.managed.protocol import ManagedRequest
 from llmcut.managed.retrieval import RetrievalResult, RetrievalService
+from llmcut.measurement import TokenMeasurement, count_payload
 from llmcut.model import BlockKind, CanonicalRequest, ContextBlock
 from llmcut.store.evidence import EvidenceStore
 from llmcut.tokens.base import TokenCounter
 from llmcut.tokens.estimate import ConservativeEstimator
+from llmcut.tokens.registry import CounterRegistry
 
 ProviderCall = Callable[[str, dict[str, Any], float], Awaitable[dict[str, Any]]]
 
@@ -59,6 +61,7 @@ class ManagedResult:
     plan: dict[str, Any] = field(default_factory=dict)
     planning_seconds: float = 0.0
     provider_seconds: float = 0.0
+    payload_measurements: tuple[TokenMeasurement, ...] = ()
 
     @property
     def saving(self) -> bool:
@@ -78,6 +81,7 @@ class ManagedRuntime:
         self.evidence = evidence
         self.provider_call = provider_call
         self.counter = counter or ConservativeEstimator()
+        self.registry = CounterRegistry(estimate=self.counter)
         self.planner = ContextPlanner(evidence, self.counter)
 
     async def plan(self, request: ManagedRequest) -> ContextPlan:
@@ -118,11 +122,16 @@ class ManagedRuntime:
         working = CanonicalRequest.from_dict(plan.request.to_dict())
         _add_retrieval_tools(working, plan.retrieval_operations, request.provider)
         events: list[RetrievalEvent] = []
+        payload_measurements: list[TokenMeasurement] = []
         repeated: set[str] = set()
         output: Any = None
         for turn in range(1, request.execution.max_turns + 1):
             _check_bounds(request, started, cancellation)
             native = _adapter(request.provider).to_native(working)
+            payload_measurement = count_payload(
+                self.registry, request.provider, request.model, native
+            )
+            payload_measurements.append(payload_measurement)
             remaining = max(0.001, request.execution.timeout_seconds - (time.monotonic() - started))
             try:
                 provider_started = time.monotonic()
@@ -137,12 +146,10 @@ class ManagedRuntime:
             except Exception as exc:
                 raise ExecutionError("managed provider request failed") from exc
             provider_usage = _adapter(request.provider).usage(response)
-            input_tokens = (
-                provider_usage["input_tokens"]
-                or self.counter.count(
-                    json.dumps(native, sort_keys=True, separators=(",", ":")), model=request.model
-                ).value
-            )
+            # Runtime preserves provider usage for operational compatibility. Trustworthy
+            # evaluation consumes ``payload_measurements`` instead, so fixture-authored
+            # usage cannot affect release statistics.
+            input_tokens = provider_usage["input_tokens"] or payload_measurement.value
             if turn == 1:
                 usage.initial_input_tokens = input_tokens
             else:
@@ -167,6 +174,7 @@ class ManagedRuntime:
                     plan.diagnostic_dict(),
                     planning_seconds,
                     provider_seconds,
+                    tuple(payload_measurements),
                 )
             working.blocks.append(_assistant_block(request.provider, response, turn))
             for call_id, operation, arguments in calls:

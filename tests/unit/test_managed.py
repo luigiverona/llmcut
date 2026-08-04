@@ -570,7 +570,9 @@ def test_tool_registry_and_release_targets() -> None:
     results = [
         ManagedEvaluation(str(i), 100, 50, 5, 10, 65, 2, 0, 1, 2, True, None) for i in range(4)
     ]
-    assert release_targets(results)["passed"]
+    targets = release_targets(results)
+    assert targets["positive_saving_cases"] == 4
+    assert not targets["passed"]  # v0.4 requires at least five eligible release tasks.
     with pytest.raises(ValueError, match="unique"):
         ToolRegistry(
             (

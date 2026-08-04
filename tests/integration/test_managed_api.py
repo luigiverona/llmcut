@@ -84,8 +84,10 @@ def test_managed_cli_evaluation_targets(tmp_path: Path) -> None:
     result = CliRunner().invoke(app, ["eval", "--corpus", str(corpus), "--repo", str(tmp_path)])
     assert result.exit_code == 0, result.output
     value = json.loads(result.stdout)
-    assert value["targets"]["passed"]
-    assert value["targets"]["positive_saving_cases"] == 5
+    assert not value["targets"]["passed"]
+    assert value["measurement_trust"] == "untrusted_fixture"
+    assert not value["release_eligible"]
+    assert value["targets"]["positive_saving_cases"] == 0
     heavy = next(item for item in value["cases"] if item["task_id"] == "retrieval-heavy-control")
     assert not heavy["saving"] and heavy["total_tokens"] > heavy["baseline_tokens"]
 

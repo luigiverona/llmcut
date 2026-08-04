@@ -23,6 +23,7 @@ class CounterRegistry:
     _tokenizers: dict[tuple[str, str], TokenCounter] = field(default_factory=dict)
     _compatible: dict[str, TokenCounter] = field(default_factory=dict)
     _cache: dict[str, TokenCount] = field(default_factory=dict)
+    version: str = "counter-registry-v1"
 
     def register_endpoint(self, provider: str, endpoint: CountEndpoint) -> None:
         self._endpoints[provider] = endpoint
