@@ -583,10 +583,24 @@ def mcp_config(repo: Annotated[Path, typer.Option("--repo")] = Path(".")) -> Non
 
 
 @codex_app.command("doctor")
-def codex_doctor() -> None:
+def codex_doctor(
+    backend: Annotated[str, typer.Option("--backend")] = "sdk",
+) -> None:
     from llmcut.integrations.codex import detect_codex
 
-    typer.echo(json.dumps(detect_codex().to_dict(), indent=2))
+    report = detect_codex().to_dict()
+    report["selected_backend"] = backend
+    typer.echo(json.dumps(report, indent=2))
+
+
+@codex_app.command("auth")
+def codex_auth(
+    mode: Annotated[str, typer.Option("--mode")] = "existing-session",
+    env_var: Annotated[str | None, typer.Option("--env-var")] = None,
+) -> None:
+    from llmcut.integrations.codex.auth import authentication_preflight
+
+    typer.echo(json.dumps(authentication_preflight(mode=mode, env_var=env_var).to_dict(), indent=2))
 
 
 @codex_app.command("config")
@@ -631,19 +645,34 @@ def codex_run(
     repo: Annotated[Path, typer.Option("--repo")] = Path("."),
     sandbox: Annotated[str, typer.Option("--sandbox")] = "workspace-write",
     approvals: Annotated[str, typer.Option("--approvals")] = "on-request",
+    backend: Annotated[str, typer.Option("--backend")] = "sdk",
+    timeout: Annotated[float, typer.Option("--timeout")] = 900,
+    auth_mode: Annotated[str, typer.Option("--auth-mode")] = "existing-session",
+    auth_env_var: Annotated[str | None, typer.Option("--auth-env-var")] = None,
 ) -> None:
     import asyncio
 
-    from llmcut.integrations.codex import CodexAppServer
+    from llmcut.integrations.codex.auth import authentication_preflight
+    from llmcut.integrations.codex.backend import codex_agent_environment, create_backend
 
+    auth = authentication_preflight(mode=auth_mode, env_var=auth_env_var)
+    if not auth.automation_ready:
+        typer.echo(f"unsupported environment: {auth.diagnostic}", err=True)
+        raise typer.Exit(3)
     result = asyncio.run(
-        CodexAppServer().run(
+        create_backend(backend).run(
             task=task,
             cwd=repo,
             model=model,
             reasoning=reasoning,
             sandbox=sandbox,
             approval_policy=approvals,
+            timeout=timeout,
+            max_turns=1,
+            environment=codex_agent_environment((), "optimized", auth_mode, auth_env_var),
+            config_overrides=(),
+            validation_callback=None,
+            cancellation=None,
         )
     )
     typer.echo(json.dumps(asdict(result), indent=2))
@@ -653,8 +682,9 @@ def codex_run(
 def codex_eval_alias(
     suite: Annotated[Path, typer.Option("--suite")],
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    backend: Annotated[str, typer.Option("--backend")] = "sdk",
 ) -> None:
-    agent_evaluate("codex", suite, dry_run)
+    agent_evaluate("codex", suite, dry_run, backend=backend)
 
 
 @agent_app.command("eval")
@@ -671,6 +701,9 @@ def agent_evaluate(
     timeout: Annotated[float | None, typer.Option("--timeout")] = None,
     fail_fast: Annotated[bool, typer.Option("--fail-fast")] = False,
     capture: Annotated[Path | None, typer.Option("--capture")] = None,
+    backend: Annotated[str | None, typer.Option("--backend")] = None,
+    auth_mode: Annotated[str | None, typer.Option("--auth-mode")] = None,
+    auth_env_var: Annotated[str | None, typer.Option("--auth-env-var")] = None,
 ) -> None:
     import asyncio
     import tempfile
@@ -691,6 +724,9 @@ def agent_evaluate(
         timeout=timeout,
         keep_worktrees=keep_worktrees,
         fail_fast=fail_fast,
+        backend=backend,
+        auth_mode=auth_mode,
+        auth_env_var=auth_env_var,
     )
     try:
         evaluation = evaluator.plan() if dry_run else asyncio.run(evaluator.run())

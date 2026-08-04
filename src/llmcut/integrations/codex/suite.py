@@ -13,6 +13,10 @@ SCHEMA_VERSION = "1"
 ORDERS = {"baseline-first", "optimized-first", "alternating", "random"}
 SANDBOXES = {"read-only", "workspace-write", "danger-full-access"}
 APPROVALS = {"never", "on-request", "untrusted"}
+BACKENDS = {"sdk", "app-server", "fake"}
+AUTH_MODES = {"existing-session", "api-key", "access-token", "none"}
+COMPARISON_DESIGNS = {"standard-baseline", "tool-parity-baseline", "synthetic-full-context"}
+REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
@@ -23,6 +27,10 @@ class ExecutionConfig:
     sandbox: str
     approval_policy: str
     environment_allowlist: tuple[str, ...] = ()
+    backend: str = "sdk"
+    auth_mode: str = "existing-session"
+    auth_env_var: str | None = None
+    comparison_design: str = "standard-baseline"
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,12 +92,29 @@ def load_suite(path: Path) -> AgentSuite:
         str(execution_raw.get("sandbox", "workspace-write")),
         str(execution_raw.get("approval_policy", "never")),
         tuple(_strings(execution_raw.get("environment_allowlist", []), "environment_allowlist")),
+        str(execution_raw.get("backend", "sdk")),
+        str(execution_raw.get("auth_mode", "existing-session")),
+        str(execution_raw["auth_env_var"]) if execution_raw.get("auth_env_var") else None,
+        str(execution_raw.get("comparison_design", "standard-baseline")),
     )
     if execution.sandbox not in SANDBOXES:
         raise ValueError(f"unsupported sandbox: {execution.sandbox}")
     if execution.approval_policy not in APPROVALS:
         raise ValueError(f"unsupported approval policy: {execution.approval_policy}")
+    if execution.reasoning_effort not in REASONING_EFFORTS:
+        raise ValueError(f"unsupported reasoning effort: {execution.reasoning_effort}")
+    if execution.backend not in BACKENDS:
+        raise ValueError(f"unsupported Codex backend: {execution.backend}")
+    if execution.auth_mode not in AUTH_MODES:
+        raise ValueError(f"unsupported authentication mode: {execution.auth_mode}")
+    if execution.auth_mode in {"api-key", "access-token"} and not execution.auth_env_var:
+        raise ValueError("explicit authentication requires auth_env_var")
+    if execution.auth_env_var and not _IDENTIFIER.fullmatch(execution.auth_env_var):
+        raise ValueError("auth_env_var must be an environment variable name")
+    if execution.comparison_design not in COMPARISON_DESIGNS:
+        raise ValueError(f"unsupported comparison design: {execution.comparison_design}")
     base = path.parent.resolve()
+    repository_base = _repository_root(base, raw.get("repository_root"))
     tasks: list[AgentTask] = []
     identifiers: set[str] = set()
     for item in raw.get("tasks", []):
@@ -98,7 +123,7 @@ def load_suite(path: Path) -> AgentSuite:
         if not _IDENTIFIER.fullmatch(identifier) or identifier in identifiers:
             raise ValueError(f"invalid or duplicate task id: {identifier}")
         identifiers.add(identifier)
-        repository = _within(base, _required(value, "repository"))
+        repository = _within(repository_base, _required(value, "repository"))
         if not repository.is_dir() or repository.is_symlink():
             raise ValueError(f"task repository is unavailable: {repository}")
         max_turns = int(value.get("max_turns", 2))
@@ -173,6 +198,22 @@ def _within(root: Path, relative: str) -> Path:
     return resolved
 
 
+def _repository_root(base: Path, value: Any) -> Path:
+    if value is None:
+        return base
+    if not isinstance(value, str) or not value:
+        raise ValueError("repository_root must be a non-empty relative path")
+    candidate = (base / value).resolve()
+    checkout = next(
+        (parent for parent in (base, *base.parents) if (parent / ".git").exists()), None
+    )
+    if checkout is None or (candidate != checkout and checkout not in candidate.parents):
+        raise ValueError("repository_root must remain inside the Git checkout")
+    if not candidate.is_dir() or candidate.is_symlink():
+        raise ValueError("repository_root is unavailable")
+    return candidate
+
+
 def _safe_paths(value: Any) -> list[str]:
     result = _strings(value, "path list")
     for item in result:
@@ -215,6 +256,10 @@ def _suite_dict(value: AgentSuite) -> dict[str, Any]:
             "sandbox": value.execution.sandbox,
             "approval_policy": value.execution.approval_policy,
             "environment_allowlist": value.execution.environment_allowlist,
+            "backend": value.execution.backend,
+            "auth_mode": value.execution.auth_mode,
+            "auth_env_var": value.execution.auth_env_var,
+            "comparison_design": value.execution.comparison_design,
         },
         "tasks": [
             {

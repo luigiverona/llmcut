@@ -143,7 +143,7 @@ class CodexAppServer:
             await rpc(
                 "initialize",
                 {
-                    "clientInfo": {"name": "llmcut", "version": "0.4.0"},
+                    "clientInfo": {"name": "llmcut", "version": "0.5.0"},
                     "capabilities": {"experimentalApi": False},
                 },
             )

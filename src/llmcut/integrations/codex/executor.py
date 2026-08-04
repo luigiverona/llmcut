@@ -16,7 +16,14 @@ from statistics import median
 from typing import Any
 
 from llmcut.index import RepositoryIndex
-from llmcut.integrations.codex.app_server import CodexAppServer, CodexRun, allowed_environment
+from llmcut.integrations.codex.app_server import CodexRun
+from llmcut.integrations.codex.auth import AuthenticationStatus, authentication_preflight
+from llmcut.integrations.codex.backend import (
+    CodexBackend,
+    codex_agent_environment,
+    create_backend,
+    validation_environment,
+)
 from llmcut.integrations.codex.doctor import detect_codex
 from llmcut.integrations.codex.suite import AgentSuite, AgentTask
 from llmcut.model import digest_bytes
@@ -78,6 +85,11 @@ class AgentRunResult:
     request_digests: tuple[str, ...] = ()
     response_digests: tuple[str, ...] = ()
     worktree: str | None = None
+    backend: str = "sdk"
+    user_task_payload: int = 0
+    llmcut_mcp_payload: int = 0
+    observable_agent_payload: int | None = None
+    comparison_design: str = "standard-baseline"
 
     @property
     def quality_passed(self) -> bool:
@@ -109,9 +121,14 @@ class AgentEvaluation:
     order: list[dict[str, Any]]
     tasks: list[dict[str, Any]]
     summary: dict[str, Any]
-    claims: dict[str, bool]
+    claims: dict[str, Any]
     dry_run: bool = False
     evaluation_root: str | None = None
+    backend: str = "sdk"
+    sdk_version: str | None = None
+    runtime_version: str | None = None
+    authentication: dict[str, Any] = field(default_factory=dict)
+    comparison_design: str = "standard-baseline"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -129,6 +146,9 @@ class CodexEvaluator:
         keep_worktrees: bool = False,
         fail_fast: bool = False,
         evaluation_root: Path | None = None,
+        backend: str | None = None,
+        auth_mode: str | None = None,
+        auth_env_var: str | None = None,
     ) -> None:
         self.suite = suite
         self.repetitions = repetitions or suite.repetitions
@@ -138,6 +158,10 @@ class CodexEvaluator:
         self.keep_worktrees = keep_worktrees
         self.fail_fast = fail_fast
         self._provided_root = evaluation_root
+        self.backend_name = backend or suite.execution.backend
+        self.auth_mode = auth_mode or suite.execution.auth_mode
+        self.auth_env_var = auth_env_var or suite.execution.auth_env_var
+        self._backend: CodexBackend = create_backend(self.backend_name, suite.executable)
         if not 1 <= self.repetitions <= 20:
             raise ValueError("repetitions override must be between 1 and 20")
         if self.order_policy not in {"baseline-first", "optimized-first", "alternating", "random"}:
@@ -178,15 +202,28 @@ class CodexEvaluator:
                 "payload_reduction": False,
                 "agent_usage_reduction": False,
                 "subscription_reduction": False,
+                "observable_payload": "not_measured",
+                "agent_input_tokens": "not_measured",
+                "provider_input_tokens": "not_measured",
+                "subscription_usage": "not_measured",
+                "task_quality": "not_measured",
             },
             True,
+            backend=self.backend_name,
+            comparison_design=self.suite.execution.comparison_design,
         )
 
     async def run(self, cancellation: asyncio.Event | None = None) -> AgentEvaluation:
         started_at = datetime.now(UTC).isoformat()
         capabilities = detect_codex() if self.suite.executable == "codex" else None
-        if capabilities is not None and (not capabilities.installed or not capabilities.app_server):
-            raise RuntimeError("Codex App Server is unavailable; run `llmcut agent codex doctor`")
+        backend_capabilities = await self._backend.doctor()
+        if not backend_capabilities.installed:
+            raise RuntimeError(
+                backend_capabilities.detail or "selected Codex backend is unavailable"
+            )
+        authentication = self._authentication_status()
+        if self.suite.executable == "codex" and not authentication.automation_ready:
+            raise RuntimeError(authentication.diagnostic or "Codex authentication is unavailable")
         root = self._evaluation_root()
         registered: list[tuple[Path, Path]] = []
         results: list[AgentRunResult] = []
@@ -231,14 +268,25 @@ class CodexEvaluator:
                 task_reports,
                 summary,
                 {
-                    "payload_reduction": bool(summary.get("eligible_comparisons")),
-                    "agent_usage_reduction": bool(
-                        capabilities and summary.get("agent_usage_comparisons")
-                    ),
+                    "payload_reduction": False,
+                    "agent_usage_reduction": summary.get("agent_input_claim")
+                    == "measured_reduction",
                     "subscription_reduction": False,
+                    "observable_payload": "not_measured",
+                    "agent_input_tokens": summary.get("agent_input_claim", "not_measured"),
+                    "provider_input_tokens": "not_measured",
+                    "subscription_usage": "not_measured",
+                    "task_quality": "measured_no_regression"
+                    if summary.get("passed")
+                    else "invalid_comparison",
                 },
                 False,
                 str(root) if self.keep_worktrees else None,
+                self.backend_name,
+                backend_capabilities.version,
+                backend_capabilities.runtime_version,
+                authentication.to_dict(),
+                self.suite.execution.comparison_design,
             )
         finally:
             if not self.keep_worktrees:
@@ -269,21 +317,21 @@ class CodexEvaluator:
             current = _validate(
                 task,
                 worktree,
-                allowed_environment(self.suite.execution.environment_allowlist, mode),
+                validation_environment(self.suite.execution.environment_allowlist, mode),
                 self.timeout,
             )
             validations.extend(current)
             return all(item.exit_code == 0 for item in current)
 
-        prompt = task.prompt if mode == "optimized" else _baseline_prompt(task, worktree)
-        mcp_overrides = _mcp_overrides(worktree, mode)
+        prompt = self._prompt(task, mode, worktree)
+        mcp_overrides = self._mcp_overrides_for_mode(worktree, mode)
         started = time.monotonic()
         run: CodexRun | None = None
         error = None
         timed_out = False
         cancelled = False
         try:
-            run = await CodexAppServer(self.suite.executable).run(
+            run = await self._backend.run(
                 task=prompt,
                 cwd=worktree,
                 model=str(settings["model"]),
@@ -292,7 +340,12 @@ class CodexEvaluator:
                 approval_policy=str(settings["approval_policy"]),
                 timeout=self.timeout,
                 max_turns=task.max_turns,
-                environment=allowed_environment(self.suite.execution.environment_allowlist, mode),
+                environment=codex_agent_environment(
+                    self.suite.execution.environment_allowlist,
+                    mode,
+                    self.auth_mode,
+                    self.auth_env_var,
+                ),
                 config_overrides=mcp_overrides,
                 validation_callback=validate,
                 cancellation=cancellation,
@@ -302,13 +355,13 @@ class CodexEvaluator:
         except asyncio.CancelledError:
             cancelled, error = True, "evaluation cancelled"
         except Exception as exc:
-            error = str(exc)[:2_048]
+            error = _safe_error(exc)
         if not validations:
             validations.extend(
                 _validate(
                     task,
                     worktree,
-                    allowed_environment(self.suite.execution.environment_allowlist, mode),
+                    validation_environment(self.suite.execution.environment_allowlist, mode),
                     self.timeout,
                 )
             )
@@ -318,8 +371,10 @@ class CodexEvaluator:
         mcp_events = [item for item in events if item["kind"] in {"mcp_tool_call", "mcp_result"}]
         calls = [item for item in mcp_events if item["kind"] == "mcp_tool_call"]
         call_keys = [(item["data"].get("server"), item["data"].get("tool")) for item in calls]
-        payload = ConservativeEstimator().count(prompt, model=self.suite.execution.model).value
-        payload += sum(int(item["data"].get("result_bytes", 0)) // 3 for item in mcp_events)
+        task_payload = (
+            ConservativeEstimator().count(task.prompt, model=self.suite.execution.model).value
+        )
+        mcp_payload = sum(int(item["data"].get("result_bytes", 0)) // 3 for item in mcp_events)
         return AgentRunResult(
             task.id,
             repetition,
@@ -348,7 +403,7 @@ class CodexEvaluator:
             len(calls),
             sum(str(item["data"].get("tool", "")).startswith("llmcut_") for item in calls),
             len(call_keys) - len(set(call_keys)),
-            payload,
+            task_payload,
             run.usage if run else None,
             "agent_reported" if run and run.usage else "unavailable",
             "unavailable",
@@ -359,7 +414,34 @@ class CodexEvaluator:
             run.request_digests if run else (),
             run.response_digests if run else (),
             str(worktree) if self.keep_worktrees else None,
+            self.backend_name,
+            task_payload,
+            mcp_payload,
+            None,
+            self.suite.execution.comparison_design,
         )
+
+    def _authentication_status(self) -> AuthenticationStatus:
+        if self.suite.executable != "codex":
+            return AuthenticationStatus(True, "unknown", "unknown", "default", True)
+        return authentication_preflight(
+            mode=self.auth_mode,
+            env_var=self.auth_env_var,
+        )
+
+    def _prompt(self, task: AgentTask, mode: str, worktree: Path) -> str:
+        if (
+            self.suite.execution.comparison_design == "synthetic-full-context"
+            and mode == "baseline"
+        ):
+            return _baseline_prompt(task, worktree)
+        return task.prompt
+
+    def _mcp_overrides_for_mode(self, worktree: Path, mode: str) -> tuple[str, ...]:
+        design = self.suite.execution.comparison_design
+        if design == "standard-baseline" and mode == "baseline":
+            return ()
+        return _mcp_overrides(worktree, mode)
 
     def _settings(self, task: AgentTask, mode: str) -> dict[str, Any]:
         overrides = task.baseline if mode == "baseline" else task.optimized
@@ -417,6 +499,12 @@ class CodexEvaluator:
             "sandbox": self.suite.execution.sandbox,
             "approval_policy": self.suite.execution.approval_policy,
             "timeout_seconds": self.timeout,
+            "backend": self.backend_name,
+            "authentication_mode": self.auth_mode,
+            "comparison_design": self.suite.execution.comparison_design,
+            "codex_agent_environment": "authentication discovery variables allowed; values omitted",
+            "validation_environment": "suite allowlist plus safe runtime defaults; values omitted",
+            "mcp_environment": "Codex MCP allowlist; credential variables not forwarded",
         }
 
 
@@ -489,6 +577,7 @@ def _mcp_overrides(worktree: Path, mode: str) -> tuple[str, ...]:
     return (
         'mcp_servers.llmcut.command="llmcut"',
         f"mcp_servers.llmcut.args={args}",
+        "mcp_servers.llmcut.env_vars=[]",
         "mcp_servers.llmcut.required=true",
     )
 
@@ -609,7 +698,9 @@ def _task_reports(
                 (baseline.payload_estimate - optimized.payload_estimate)
                 / baseline.payload_estimate
                 * 100
-                if eligible and baseline.payload_estimate
+                if eligible
+                and baseline.payload_estimate
+                and baseline.comparison_design == "synthetic-full-context"
                 else None
             )
             pairs.append(
@@ -617,8 +708,12 @@ def _task_reports(
                     "repetition": repetition,
                     "eligible": eligible,
                     "settings_parity": settings_parity,
+                    "core_execution_parity": "passed" if settings_parity else "failed",
+                    "intervention_difference": "llmcut context integration",
+                    "comparison_design": baseline.comparison_design,
                     "quality_parity": quality_parity,
                     "payload_reduction_percent": payload_reduction,
+                    "observable_payload_difference": None,
                     "agent_usage_reduction_percent": _usage_reduction(baseline, optimized)
                     if eligible
                     else None,
@@ -659,16 +754,27 @@ def _aggregate(results: list[AgentRunResult]) -> dict[str, Any]:
         "timeouts": sum(item.timed_out for item in results),
         "cancellations": sum(item.cancelled for item in results),
         "median_duration": median(durations) if durations else None,
+        "p25_duration": _percentile(durations, 0.25),
+        "p75_duration": _percentile(durations, 0.75),
         "minimum_duration": min(durations, default=None),
         "maximum_duration": max(durations, default=None),
         "median_payload_tokens": median(payloads) if payloads else None,
+        "median_observable_payload": None,
         "median_agent_input_tokens": _usage_median(usage, ("inputTokens", "input_tokens")),
         "median_output_tokens": _usage_median(usage, ("outputTokens", "output_tokens")),
         "median_cached_tokens": _usage_median(usage, ("cachedInputTokens", "cached_tokens")),
         "correction_turns": sum(item.correction_turns for item in results),
         "tool_calls": sum(item.tool_calls for item in results),
         "mcp_calls": sum(item.mcp_calls for item in results),
+        "median_mcp_calls": median([item.mcp_calls for item in results]) if results else None,
         "retrieval_calls": sum(item.retrieval_calls for item in results),
+        "median_retrieval_calls": median([item.retrieval_calls for item in results])
+        if results
+        else None,
+        "median_correction_turns": median([item.correction_turns for item in results])
+        if results
+        else None,
+        "timeout_rate": sum(item.timed_out for item in results) / len(results) if results else 0.0,
         "unrelated_change_rate": sum(bool(item.unrelated_changes) for item in results)
         / len(results)
         if results
@@ -685,6 +791,7 @@ def _summary(tasks: list[dict[str, Any]], results: list[AgentRunResult]) -> dict
         if pair.get("payload_reduction_percent") is not None
     ]
     agent = [pair for pair in eligible if pair.get("agent_usage_reduction_percent") is not None]
+    agent_reductions = [float(pair["agent_usage_reduction_percent"]) for pair in agent]
     return {
         "runs": len(results),
         "quality_successes": sum(item.quality_passed for item in results),
@@ -695,6 +802,22 @@ def _summary(tasks: list[dict[str, Any]], results: list[AgentRunResult]) -> dict
         "excluded_comparisons": len(comparisons) - len(eligible),
         "median_payload_reduction_percent": median(reductions) if reductions else None,
         "agent_usage_comparisons": len(agent),
+        "agent_usage_reductions": sum(value > 0 for value in agent_reductions),
+        "agent_input_claim": (
+            "not_measured"
+            if not agent_reductions
+            else "measured_reduction"
+            if median(agent_reductions) > 0
+            else "measured_no_reduction"
+        ),
+        "paired_agent_input_differences_percent": agent_reductions,
+        "agent_input_minimum_reduction_percent": min(agent_reductions, default=None),
+        "agent_input_maximum_reduction_percent": max(agent_reductions, default=None),
+        "agent_input_iqr_percent": (
+            [_percentile(agent_reductions, 0.25), _percentile(agent_reductions, 0.75)]
+            if agent_reductions
+            else None
+        ),
         "subscription_usage": "unavailable",
         "passed": bool(results)
         and all(item.quality_passed for item in results)
@@ -717,3 +840,26 @@ def _usage_reduction(baseline: AgentRunResult, optimized: AgentRunResult) -> flo
     before = _usage_median([baseline.agent_usage], ("inputTokens", "input_tokens"))
     after = _usage_median([optimized.agent_usage], ("inputTokens", "input_tokens"))
     return (before - after) / before * 100 if before and after is not None else None
+
+
+def _percentile(values: list[float], fraction: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * fraction
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    weight = position - lower
+    return ordered[lower] * (1 - weight) + ordered[upper] * weight
+
+
+def _safe_error(error: BaseException) -> str:
+    rendered = str(error)[:2_048]
+    rendered = re.sub(
+        r"(?i)(authorization|cookie|api[-_ ]?key|access[-_ ]?token|password)"
+        r"\s*[:=]\s*[^\s,;]+",
+        r"\1=[REDACTED]",
+        rendered,
+    )
+    rendered = re.sub(r"\b(?:sk-|Bearer\s+)[A-Za-z0-9._-]{8,}", "[REDACTED]", rendered)
+    return rendered

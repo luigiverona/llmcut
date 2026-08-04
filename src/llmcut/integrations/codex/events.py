@@ -36,6 +36,8 @@ def normalize_event(message: dict[str, Any]) -> NormalizedEvent | None:
         )
     if method == "thread/tokenUsage/updated":
         usage = params.get("tokenUsage") or params.get("usage") or {}
+        usage_object = _object(usage)
+        usage = usage_object.get("last") or usage_object.get("total") or usage_object
         return NormalizedEvent("usage_update", method, _bounded_scalars(_object(usage)))
     if method == "model/rerouted":
         return NormalizedEvent(

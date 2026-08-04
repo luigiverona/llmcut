@@ -214,7 +214,7 @@ def write_agent_capture(evaluation: dict[str, Any], destination: Path) -> Path:
             "capture_provenance": (
                 "untrusted_fixture"
                 if redacted.get("codex_version") == "configured-test-transport"
-                else "live_provider"
+                else "live_agent"
                 if any(run.get("agent_usage") for run in runs)
                 else "locally_counted"
             ),
