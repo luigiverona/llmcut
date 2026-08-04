@@ -1,5 +1,16 @@
 # Architecture
 
+## v0.4 measurement and agent boundaries
+
+Exact provider-native payload serialization is the boundary for offline token measurement. Each
+measurement is digest-bound and carries its trust and layer; provider responses, captures, agent
+events, and subscription accounting are distinct sources that cannot silently replace one another.
+Executable evaluation owns temporary Git worktrees and validation, not the optimizer.
+
+The MCP server is an integration adapter over repository indexing and exact retrieval. It applies
+its own filesystem policy and never enters the provider-neutral canonical model. Codex support is
+isolated under `integrations/codex`; core optimization and MCP remain usable without Codex.
+
 ## Canonical model and pipeline
 
 `CanonicalRequest` owns ordered `ContextBlock` instances and separate tool definitions. Blocks carry

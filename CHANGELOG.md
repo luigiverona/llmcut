@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.0 - 2026-08-03
+
+- Replaced fixture-authored release token gates with digest-bound counts of exact provider-bound
+  payloads and explicit measurement quality, trust, layer, counter version, and capture provenance.
+- Added verified multi-turn capture inspection, offline replay, deterministic redaction, and
+  deletion; recorded mock usage is now explicitly untrusted and release-ineligible.
+- Added materialized benchmark repositories, isolated paired worktrees, executable acceptance
+  commands, patch-scope checks, and all-case release statistics including negative controls.
+- Added a standards-compliant MCP stdio server using the maintained official SDK with compact
+  repository retrieval tools/resources and independent path, secret, digest, and volume controls.
+- Added an experimental isolated Codex App Server/MCP integration with capability detection,
+  safe reversible TOML configuration, parity-preserving run settings, and unavailable usage labels.
+
 ## 0.3.0 - 2026-08-03
 
 - Added versioned provider-neutral managed requests, explicit retention/provenance semantics, and

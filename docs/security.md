@@ -1,5 +1,18 @@
 # Security and privacy model
 
+## Captures, MCP, and coding agents
+
+Captures are sensitive, digest-verified artifacts. Content persistence is explicit, locations are
+root-relative, redaction removes credentials and reasoning fields, replay is offline, and deletion
+requires an explicit verified capture directory. Routine metrics contain provenance and counts, not
+prompts.
+
+MCP executes outside a coding agent's shell sandbox. The stdio server therefore fixes a repository
+root at startup, excludes secret paths and symlink escapes, verifies indexed digests, bounds every
+range/search/result, and exposes neither command execution, environment values, nor network access.
+Codex configuration changes happen only on explicit `init`, retain a restrictive backup, preserve
+unrelated TOML, validate, and replace atomically.
+
 Transport content, persisted evidence, and diagnostics are separate boundaries. Redaction applies
 only to persistence and diagnostics; it never mutates the provider-bound body. Credential values are
 read at request time from configured standard environment variables and are not included in stored

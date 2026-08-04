@@ -4,7 +4,8 @@
 coding agents, and API clients. It keeps the smallest confidently sufficient working set in model
 context, stores original evidence locally, and expands context when exclusion could affect quality.
 
-Version 0.3.0 adds explicit managed integration while remaining conservative: **extreme is the default but is not lossy**. The
+Version 0.4.0 adds trustworthy payload evaluation and experimental coding-agent integration while
+remaining conservative: **extreme is the default but is not lossy**. The
 optimizer does not change models, reasoning settings, tools, validation requirements, or source
 code. Low-confidence material stays in context; recoverable omission requires explicit,
 high-confidence evidence. The policy is enforced during optimization, but outcome parity is not
@@ -187,6 +188,26 @@ with SQLite's backup mechanism while no write transaction is active; never delet
 migration or corruption error.
 
 ## Savings and evaluation
+
+The v0.3 recorded corpus contained editable provider-response usage values. Those records remain
+useful for adapter parsing and continuation replay, but v0.4 labels them `untrusted_fixture` and
+excludes them from release statistics. Release counts are derived from the exact native payloads,
+bound to SHA-256 request digests, and validated with executable outcomes in paired clean worktrees:
+
+```bash
+llmcut eval --corpus tests/fixtures/benchmarks/suite.toml
+llmcut tokens count --provider openai --model offline-model --input request.json
+```
+
+Payload estimates, provider-reported usage, agent-reported usage, and subscription usage are
+distinct layers. llmcut does not infer subscription units from token counts. See
+[evaluation](docs/evaluation.md) and [captures](docs/captures.md).
+
+Expose allowlisted repository retrieval over MCP stdio with `llmcut mcp serve --repo .`. Generate a
+Codex configuration snippet with `llmcut agent codex config --repo .`; mutation occurs only through
+the explicit, backed-up, atomic `init` command. The Codex integration is experimental and no Codex
+token or subscription reduction is claimed without a live supported harness measurement. See
+[MCP](docs/mcp.md) and [Codex integration](docs/integrations/codex.md).
 
 Token values say whether they are exact, provider-reported, tokenizer-derived, or estimated. The
 built-in fallback is a conservative UTF-8 byte estimate and is never labeled exact. Logical input
