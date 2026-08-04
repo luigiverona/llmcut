@@ -39,7 +39,12 @@ for line in sys.stdin:
                 }
             )
             continue
-        result: dict[str, object] = {"platformFamily": "unix", "platformOs": "linux"}
+        result: dict[str, object] = {
+            "platformFamily": "unix",
+            "platformOs": "linux",
+            "userAgent": "fake-codex/0.5",
+            "serverInfo": {"name": "fake-codex", "version": "0.5"},
+        }
     elif method == "thread/start":
         if request["params"].get("sandbox") not in {
             "read-only",
@@ -64,7 +69,28 @@ for line in sys.stdin:
             )
             continue
         cwd = Path(request["params"]["cwd"])
-        result = {"thread": {"id": "thread-1", "sessionId": "thread-1"}}
+        result = {
+            "approvalPolicy": request["params"]["approvalPolicy"],
+            "approvalsReviewer": "user",
+            "cwd": str(cwd.resolve()),
+            "model": request["params"].get("model", "same-model"),
+            "modelProvider": "openai",
+            "sandbox": {"type": "workspaceWrite"},
+            "thread": {
+                "id": "thread-1",
+                "sessionId": "thread-1",
+                "cliVersion": "0.5",
+                "createdAt": 1,
+                "updatedAt": 1,
+                "cwd": str(cwd.resolve()),
+                "ephemeral": True,
+                "modelProvider": "openai",
+                "preview": "",
+                "source": "appServer",
+                "status": {"type": "idle"},
+                "turns": [],
+            },
+        }
     elif method == "turn/start":
         turns += 1
         turn_id = f"turn-{turns}"
@@ -77,6 +103,9 @@ for line in sys.stdin:
         send({"jsonrpc": "2.0", "id": request["id"], "result": result})
     if method != "turn/start":
         continue
+    # The real runtime cannot complete a turn in the same instant as the start response. This
+    # bounded delay lets the SDK register its documented turn stream before notifications arrive.
+    time.sleep(0.02)
     if scenario == "timeout":
         time.sleep(60)
         continue
@@ -84,7 +113,11 @@ for line in sys.stdin:
         {
             "jsonrpc": "2.0",
             "method": "turn/started",
-            "params": {"turn": {"id": turn_id, "status": "inProgress", "items": []}},
+            "params": {
+                "threadId": "thread-1",
+                "turnId": turn_id,
+                "turn": {"id": turn_id, "status": "inProgress", "items": []},
+            },
         }
     )
     send(
@@ -92,14 +125,17 @@ for line in sys.stdin:
             "jsonrpc": "2.0",
             "method": "item/completed",
             "params": {
+                "threadId": "thread-1",
+                "turnId": turn_id,
                 "item": {
                     "id": f"command-{turns}",
                     "type": "commandExecution",
-                    "command": ["python", "tests/validate_callback.py"],
+                    "command": "python tests/validate_callback.py",
+                    "commandActions": [],
                     "cwd": str(cwd),
                     "status": "completed",
                     "exitCode": 0,
-                }
+                },
             },
         }
     )
@@ -114,6 +150,8 @@ for line in sys.stdin:
                 "jsonrpc": "2.0",
                 "method": "item/completed",
                 "params": {
+                    "threadId": "thread-1",
+                    "turnId": turn_id,
                     "item": {
                         "id": f"change-{turns}",
                         "type": "fileChange",
@@ -121,7 +159,7 @@ for line in sys.stdin:
                             {"path": "app/callback.py", "kind": "update", "diff": "redacted"}
                         ],
                         "status": "completed",
-                    }
+                    },
                 },
             }
         )
@@ -133,6 +171,8 @@ for line in sys.stdin:
                     "jsonrpc": "2.0",
                     "method": "item/started",
                     "params": {
+                        "threadId": "thread-1",
+                        "turnId": turn_id,
                         "item": {
                             "id": f"mcp-{turns}-{number}",
                             "type": "mcpToolCall",
@@ -140,7 +180,7 @@ for line in sys.stdin:
                             "tool": "llmcut_context_get",
                             "status": "inProgress",
                             "arguments": {"context_id": "app/callback.py"},
-                        }
+                        },
                     },
                 }
             )
@@ -149,14 +189,22 @@ for line in sys.stdin:
                     "jsonrpc": "2.0",
                     "method": "item/completed",
                     "params": {
+                        "threadId": "thread-1",
+                        "turnId": turn_id,
                         "item": {
                             "id": f"mcp-{turns}-{number}",
                             "type": "mcpToolCall",
                             "server": "llmcut",
                             "tool": "llmcut_context_get",
                             "status": "completed",
-                            "result": {"digest": "sha256:fixture", "bytes": 120},
-                        }
+                            "result": {
+                                "content": [{"type": "text", "text": "verified fixture evidence"}],
+                                "structuredContent": {
+                                    "digest": "sha256:fixture",
+                                    "bytes": 120,
+                                },
+                            },
+                        },
                     },
                 }
             )
@@ -165,23 +213,36 @@ for line in sys.stdin:
             {
                 "jsonrpc": "2.0",
                 "method": "model/rerouted",
-                "params": {"fromModel": "fake-codex-model", "toModel": "other-model"},
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": turn_id,
+                    "fromModel": "fake-codex-model",
+                    "toModel": "other-model",
+                },
             }
         )
         continue
     if scenario != "unavailable-usage":
         input_tokens = 900 if mode == "baseline" else 500
+        breakdown = {
+            "inputTokens": input_tokens,
+            "outputTokens": 20,
+            "cachedInputTokens": 10,
+            "reasoningOutputTokens": 5,
+            "totalTokens": input_tokens + 25,
+        }
         send(
             {
                 "jsonrpc": "2.0",
                 "method": "thread/tokenUsage/updated",
                 "params": {
+                    "threadId": "thread-1",
+                    "turnId": turn_id,
                     "tokenUsage": {
-                        "inputTokens": input_tokens,
-                        "outputTokens": 20,
-                        "cachedInputTokens": 10,
-                        "reasoningTokens": 5,
-                    }
+                        "last": breakdown,
+                        "total": breakdown,
+                        "modelContextWindow": 200_000,
+                    },
                 },
             }
         )
@@ -189,6 +250,10 @@ for line in sys.stdin:
         {
             "jsonrpc": "2.0",
             "method": "turn/completed",
-            "params": {"turn": {"id": turn_id, "status": "completed", "items": []}},
+            "params": {
+                "threadId": "thread-1",
+                "turnId": turn_id,
+                "turn": {"id": turn_id, "status": "completed", "items": []},
+            },
         }
     )

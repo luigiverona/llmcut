@@ -47,12 +47,12 @@ def test_non_dry_run_cli_executes_ab_and_writes_capture(tmp_path: Path) -> None:
     report = json.loads(output.read_text())
     assert report["summary"]["passed"]
     assert report["order"][0]["mode"] == "optimized"
-    assert report["claims"] == {
-        "payload_reduction": True,
-        "agent_usage_reduction": False,
-        "subscription_reduction": False,
-    }
+    assert report["claims"]["payload_reduction"] is False
+    assert report["claims"]["agent_input_tokens"] == "measured_reduction"
+    assert report["claims"]["subscription_usage"] == "not_measured"
+    assert report["comparison_design"] == "standard-baseline"
     assert report["tasks"][0]["comparisons"][0]["settings_parity"]
+    assert report["tasks"][0]["comparisons"][0]["core_execution_parity"] == "passed"
     assert report["tasks"][0]["modes"]["optimized"]["retrieval_calls"] == 1
     assert verify_capture(capture).turns == 2
     assert output.stat().st_mode & 0o077 == 0

@@ -255,7 +255,7 @@ def test_redaction_skips_metadata_only_turn_and_live_capture_runs(tmp_path: Path
         },
         tmp_path / "live",
     )
-    assert json.loads((live / "manifest.json").read_text())["capture_provenance"] == "live_provider"
+    assert json.loads((live / "manifest.json").read_text())["capture_provenance"] == "live_agent"
 
 
 def test_agent_capture_rejects_non_object_and_cleans_temporary_directory(tmp_path: Path) -> None:

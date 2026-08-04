@@ -1,0 +1,83 @@
+schema_version = "1"
+agent = "codex"
+repetitions = 3
+order = "random"
+seed = 5050
+timeout_seconds = 240
+repository_root = "../../fixtures/benchmarks"
+
+[execution]
+model = "gpt-5.6-terra"
+reasoning_effort = "low"
+sandbox = "workspace-write"
+approval_policy = "never"
+backend = "sdk"
+auth_mode = "existing-session"
+comparison_design = "standard-baseline"
+environment_allowlist = []
+
+[[tasks]]
+id = "python-defect"
+repository = "python-defect"
+starting_ref = "HEAD"
+prompt = "Fix app/callback.py timeout units and run python tests/validate_callback.py."
+validation = [["python", "tests/validate_callback.py"]]
+allowed_changes = ["app/callback.py"]
+forbidden_changes = ["app/config.py", "app/reporting.py"]
+required_files = ["app/callback.py", "app/config.py", "tests/validate_callback.py"]
+max_turns = 2
+
+[[tasks]]
+id = "typescript-defect"
+repository = "typescript-defect"
+starting_ref = "HEAD"
+prompt = "Fix the millisecond conversion defect. Run basedpyright src tests and node --test tests/timeout.test.ts."
+validation = [["basedpyright", "src", "tests"], ["node", "--test", "tests/timeout.test.ts"]]
+allowed_changes = ["src/timeout.ts"]
+forbidden_changes = ["src/config.ts", "src/dashboard.ts", "package-lock.json"]
+required_files = ["src/timeout.ts", "src/config.ts", "tests/timeout.test.ts", "package-lock.json"]
+max_turns = 2
+
+[[tasks]]
+id = "configuration-change"
+repository = "config-change"
+starting_ref = "HEAD"
+prompt = "Move the default region to ca-central-1 across application configuration and documentation. Run python tests/validate.py."
+validation = [["python", "tests/validate.py"]]
+allowed_changes = ["app/settings.py", "config.json", "docs/deployment.md"]
+forbidden_changes = ["app/observability.py"]
+required_files = ["app/settings.py", "config.json", "docs/deployment.md", "tests/validate.py"]
+max_turns = 2
+
+[[tasks]]
+id = "large-test-failure"
+repository = "large-failure"
+starting_ref = "HEAD"
+prompt = "Diagnose the relevant failure in test-output.log, fix parse_status, and run python tests/validate.py."
+validation = [["python", "tests/validate.py"]]
+allowed_changes = ["app/parser.py"]
+forbidden_changes = ["docs/troubleshooting.md", "test-output.log"]
+required_files = ["app/parser.py", "tests/validate.py", "test-output.log"]
+max_turns = 2
+
+[[tasks]]
+id = "long-coding-history"
+repository = "history"
+starting_ref = "HEAD"
+prompt = "Continue the retry change described by the verified checkpoint and coding history. Resolve the remaining work and run python tests/validate.py."
+validation = [["python", "tests/validate.py"]]
+allowed_changes = ["app/worker.py"]
+forbidden_changes = ["checkpoint.md", "history.log"]
+required_files = ["app/worker.py", "tests/validate.py", "checkpoint.md", "history.log"]
+max_turns = 2
+
+[[tasks]]
+id = "no-benefit-control"
+repository = "python-defect"
+starting_ref = "HEAD"
+prompt = "Fix callback timeout and run its validation."
+validation = [["python", "tests/validate_callback.py"]]
+allowed_changes = ["app/callback.py"]
+forbidden_changes = ["app/config.py", "app/reporting.py"]
+required_files = ["app/callback.py", "tests/validate_callback.py"]
+max_turns = 2

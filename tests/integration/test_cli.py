@@ -13,7 +13,7 @@ runner = CliRunner()
 def test_help_and_version() -> None:
     assert runner.invoke(app, ["--help"]).exit_code == 0
     result = runner.invoke(app, ["--version"])
-    assert result.exit_code == 0 and "0.4.0" in result.stdout
+    assert result.exit_code == 0 and "0.5.0" in result.stdout
     for command in (
         "init",
         "inspect",
@@ -27,6 +27,32 @@ def test_help_and_version() -> None:
         "doctor",
     ):
         assert command in runner.invoke(app, ["--help"]).stdout
+
+
+def test_codex_diagnostics_are_machine_readable() -> None:
+    doctor = runner.invoke(app, ["agent", "codex", "doctor", "--backend", "sdk"])
+    assert doctor.exit_code == 0
+    assert json.loads(doctor.stdout)["selected_backend"] == "sdk"
+    auth = runner.invoke(app, ["agent", "codex", "auth", "--mode", "none"])
+    assert auth.exit_code == 0
+    assert json.loads(auth.stdout)["authenticated"] is False
+    unavailable = runner.invoke(
+        app,
+        [
+            "agent",
+            "codex",
+            "run",
+            "--task",
+            "test",
+            "--model",
+            "model",
+            "--reasoning",
+            "low",
+            "--auth-mode",
+            "none",
+        ],
+    )
+    assert unavailable.exit_code == 3 and "unsupported environment" in unavailable.stderr
 
 
 def make_repo(tmp_path: Path) -> Path:
