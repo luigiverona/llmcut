@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
@@ -76,6 +77,15 @@ def verify_capture(path: Path) -> CaptureVerification:
             raise ValueError("capture provider identity mismatch")
         if turn.get("model") not in {None, value.get("model")}:
             raise ValueError("capture model identity mismatch")
+    for number, artifact in enumerate(value.get("artifacts", []), 1):
+        location = artifact.get("content_location")
+        if not location:
+            raise ValueError(f"capture artifact {number} has no content location")
+        target = _safe_location(root, str(location))
+        if not target.is_file() or request_digest(json.loads(target.read_text())) != artifact.get(
+            "digest"
+        ):
+            raise ValueError(f"capture artifact {number} digest mismatch")
     return CaptureVerification(
         str(value.get("capture_id", "")),
         len(value["turns"]),
@@ -140,3 +150,90 @@ def delete_capture(path: Path) -> None:
         raise ValueError("refusing broad capture deletion target")
     verify_capture(root)
     shutil.rmtree(root)
+
+
+def write_agent_capture(evaluation: dict[str, Any], destination: Path) -> Path:
+    """Write a metadata-only, redacted, digest-verifiable agent evaluation capture."""
+    destination = destination.resolve()
+    if destination.exists():
+        raise ValueError("capture destination already exists")
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary = Path(tempfile.mkdtemp(prefix=".llmcut-capture-", dir=destination.parent))
+    os.chmod(temporary, 0o700)
+    try:
+        redacted, _ = _redact(evaluation)
+        if not isinstance(redacted, dict):
+            raise ValueError("agent evaluation capture must be an object")
+        artifact_dir = temporary / "artifacts"
+        artifact_dir.mkdir(mode=0o700)
+        artifact = artifact_dir / "evaluation.json"
+        artifact.write_text(json.dumps(redacted, sort_keys=True, separators=(",", ":")))
+        os.chmod(artifact, 0o600)
+        artifact_payload = json.loads(artifact.read_text())
+        runs = [
+            run
+            for task in redacted.get("tasks", [])
+            for run in task.get("runs", [])
+            if isinstance(run, dict)
+        ]
+        turns = []
+        for number, run in enumerate(runs, 1):
+            requests = run.get("request_digests") or []
+            responses = run.get("response_digests") or []
+            turns.append(
+                {
+                    "sequence": number,
+                    "request": {"digest": requests[-1] if requests else request_digest({})},
+                    "response": {"digest": responses[-1] if responses else response_digest({})},
+                    "usage": {
+                        "input_tokens": (run.get("agent_usage") or {}).get("inputTokens", 0),
+                        "quality": run.get("agent_usage_quality", "unavailable"),
+                    },
+                    "settings_digest": run.get("settings_digest"),
+                    "worktree_revision": run.get("starting_commit"),
+                    "validation_passed": run.get("validation_passed"),
+                    "tool_calls": run.get("tool_calls", 0),
+                    "mcp_calls": run.get("mcp_calls", 0),
+                }
+            )
+        if not turns:
+            turns.append(
+                {
+                    "sequence": 1,
+                    "request": {"digest": request_digest({})},
+                    "response": {"digest": response_digest({})},
+                    "usage": {"input_tokens": 0, "quality": "unavailable"},
+                }
+            )
+        manifest = {
+            "schema_version": CAPTURE_SCHEMA_VERSION,
+            "capture_id": str(redacted.get("run_id", "")),
+            "provider": "codex-app-server",
+            "model": str(redacted.get("environment", {}).get("model", "unknown")),
+            "endpoint": "app-server-stdio",
+            "capture_provenance": (
+                "untrusted_fixture"
+                if redacted.get("codex_version") == "configured-test-transport"
+                else "live_provider"
+                if any(run.get("agent_usage") for run in runs)
+                else "locally_counted"
+            ),
+            "persistence": {"prompt_content": False, "source_content": False},
+            "redaction": {"applied": True, "version": "deterministic-v1"},
+            "turns": turns,
+            "artifacts": [
+                {
+                    "kind": "agent_evaluation",
+                    "digest": request_digest(artifact_payload),
+                    "content_location": "artifacts/evaluation.json",
+                }
+            ],
+        }
+        manifest_path = temporary / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+        os.chmod(manifest_path, 0o600)
+        os.replace(temporary, destination)
+        return destination
+    except BaseException:
+        shutil.rmtree(temporary)
+        raise
