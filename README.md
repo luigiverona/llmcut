@@ -209,6 +209,13 @@ the explicit, backed-up, atomic `init` command. The Codex integration is experim
 token or subscription reduction is claimed without a live supported harness measurement. See
 [MCP](docs/mcp.md) and [Codex integration](docs/integrations/codex.md).
 
+Executable A/B evaluation is available with
+`llmcut agent eval --agent codex --suite suite.toml`. It uses isolated paired worktrees, repeated and
+recorded ordering, App Server events, argv-safe deterministic validation, changed-file restrictions,
+and optional verified captures. Use `--dry-run` to validate the suite and execution plan. The
+TypeScript benchmark includes a lockfile-controlled compiler/type-check plus runtime test rather
+than structural source inspection.
+
 Token values say whether they are exact, provider-reported, tokenizer-derived, or estimated. The
 built-in fallback is a conservative UTF-8 byte estimate and is never labeled exact. Logical input
 reduction, cached input, billed usage, recovery overhead, retries, output tokens, and reasoning

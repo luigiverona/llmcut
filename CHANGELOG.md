@@ -12,6 +12,10 @@
   repository retrieval tools/resources and independent path, secret, digest, and volume controls.
 - Added an experimental isolated Codex App Server/MCP integration with capability detection,
   safe reversible TOML configuration, parity-preserving run settings, and unavailable usage labels.
+- Added complete repeated baseline/optimized Codex App Server execution with isolated worktrees,
+  deterministic validation, bounded event/usage normalization, safe cleanup, and JSON/text reports.
+- Added redacted agent-evaluation capture generation and a lockfile-controlled executable
+  TypeScript compiler/runtime benchmark; fake usage remains untrusted integration evidence.
 
 ## 0.3.0 - 2026-08-03
 
