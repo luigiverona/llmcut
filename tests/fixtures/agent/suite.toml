@@ -1,0 +1,13 @@
+repetitions = 3
+order = "randomized"
+seed = 404
+
+[[tasks]]
+id = "python-callback-timeout"
+repository = "../benchmarks/python-defect"
+task = "Fix app/callback.py timeout units and run python tests"
+validation = ["python", "tests/validate_callback.py"]
+model = "caller-supplied"
+reasoning = "caller-supplied"
+sandbox = "caller-supplied"
+approvals = "caller-supplied"

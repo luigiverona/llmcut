@@ -32,8 +32,18 @@ app = typer.Typer(
 )
 checkpoint_app = typer.Typer(help="Create, inspect, verify, and restore checkpoints.")
 evidence_app = typer.Typer(help="Inspect and retrieve content-addressed evidence.")
+capture_app = typer.Typer(help="Inspect, verify, redact, replay, and delete captures.")
+tokens_app = typer.Typer(help="Count and verify exact provider-bound payloads.")
+mcp_app = typer.Typer(help="Serve and inspect the llmcut MCP integration.")
+agent_app = typer.Typer(help="Evaluate supported coding-agent integrations.")
+codex_app = typer.Typer(help="Inspect and configure the experimental Codex integration.")
 app.add_typer(checkpoint_app, name="checkpoint")
 app.add_typer(evidence_app, name="evidence")
+app.add_typer(capture_app, name="capture")
+app.add_typer(tokens_app, name="tokens")
+app.add_typer(mcp_app, name="mcp")
+app.add_typer(agent_app, name="agent")
+agent_app.add_typer(codex_app, name="codex")
 
 
 def _store(repo: Path) -> EvidenceStore:
@@ -258,6 +268,22 @@ def evaluate(
     minimum_reduction: Annotated[float, typer.Option("--minimum-reduction")] = 0.0,
 ) -> None:
     """Execute deterministic baseline-versus-optimized offline evaluations."""
+    if corpus.suffix == ".toml":
+        from llmcut.eval.executable import evaluate_suite
+
+        executable_results, statistics = evaluate_suite(corpus)
+        typer.echo(
+            json.dumps(
+                {
+                    "cases": [item.to_dict() for item in executable_results],
+                    "statistics": statistics,
+                },
+                indent=2,
+            )
+        )
+        if not statistics["passed"]:
+            raise typer.Exit(1)
+        return
     first = next((line for line in corpus.read_text().splitlines() if line.strip()), "")
     if first and "managed_request" in json.loads(first):
         import asyncio
@@ -288,9 +314,18 @@ def evaluate(
             }
             for item in managed_results
         ]
-        typer.echo(json.dumps({"cases": rendered, "targets": targets}, indent=2))
-        if not targets["passed"]:
-            raise typer.Exit(1)
+        typer.echo(
+            json.dumps(
+                {
+                    "cases": rendered,
+                    "targets": targets,
+                    "measurement_trust": "untrusted_fixture",
+                    "release_eligible": False,
+                    "purpose": "adapter parsing and managed replay only",
+                },
+                indent=2,
+            )
+        )
         return
     from llmcut.eval.corpus import read_corpus
     from llmcut.eval.runner import run_case
@@ -395,6 +430,260 @@ def benchmark(repo: Annotated[Path, typer.Option("--repo")] = Path(".")) -> None
             indent=2,
         )
     )
+
+
+@capture_app.command("inspect")
+def capture_inspect(path: Path) -> None:
+    from llmcut.captures import load_capture
+
+    value = load_capture(path)
+    safe = {
+        key: value.get(key)
+        for key in (
+            "schema_version",
+            "capture_id",
+            "provider",
+            "model",
+            "endpoint",
+            "persistence",
+            "redaction",
+        )
+    }
+    safe["turns"] = len(value["turns"])
+    typer.echo(json.dumps(safe, indent=2))
+
+
+@capture_app.command("verify")
+def capture_verify(path: Path) -> None:
+    from llmcut.captures import verify_capture
+
+    typer.echo(json.dumps(asdict(verify_capture(path)), indent=2))
+
+
+@capture_app.command("redact")
+def capture_redact(path: Path) -> None:
+    from llmcut.captures import redact_capture
+
+    typer.echo(json.dumps({"redacted_fields": redact_capture(path)}, indent=2))
+
+
+@capture_app.command("replay")
+def capture_replay(path: Path) -> None:
+    """Verify a capture and describe its offline replay; never contact a provider."""
+    from llmcut.captures import load_capture, verify_capture
+
+    verification = verify_capture(path)
+    value = load_capture(path)
+    typer.echo(json.dumps({"verified": asdict(verification), "turns": value["turns"]}, indent=2))
+
+
+@capture_app.command("delete")
+def capture_delete(path: Path) -> None:
+    from llmcut.captures import delete_capture
+
+    delete_capture(path)
+    typer.echo("Capture removed after reference and digest verification")
+
+
+@tokens_app.command("count")
+def tokens_count(
+    provider: Annotated[str, typer.Option("--provider")],
+    model: Annotated[str, typer.Option("--model")],
+    input_file: Annotated[Path, typer.Option("--input")],
+) -> None:
+    from llmcut.measurement import count_payload
+    from llmcut.tokens.registry import CounterRegistry
+
+    payload = json.loads(input_file.read_text())
+    typer.echo(
+        json.dumps(count_payload(CounterRegistry(), provider, model, payload).to_dict(), indent=2)
+    )
+
+
+@tokens_app.command("verify")
+def tokens_verify(path: Path) -> None:
+    from llmcut.captures import verify_capture
+
+    typer.echo(json.dumps(asdict(verify_capture(path)), indent=2))
+
+
+@tokens_app.command("compare")
+def tokens_compare(
+    baseline: Path,
+    optimized: Path,
+    provider: Annotated[str, typer.Option("--provider")],
+    model: Annotated[str, typer.Option("--model")],
+) -> None:
+    from llmcut.measurement import count_payload
+    from llmcut.tokens.registry import CounterRegistry
+
+    registry = CounterRegistry()
+    first = count_payload(registry, provider, model, json.loads(baseline.read_text()))
+    second = count_payload(registry, provider, model, json.loads(optimized.read_text()))
+    reduction = (first.value - second.value) / first.value * 100 if first.value else 0.0
+    typer.echo(
+        json.dumps(
+            {
+                "baseline": first.to_dict(),
+                "optimized": second.to_dict(),
+                "reduction_percent": reduction,
+            },
+            indent=2,
+        )
+    )
+
+
+@mcp_app.command("serve")
+def mcp_serve(repo: Annotated[Path, typer.Option("--repo")] = Path(".")) -> None:
+    from llmcut.mcp.server import serve
+
+    serve(repo)
+
+
+@mcp_app.command("inspect")
+def mcp_inspect(repo: Annotated[Path, typer.Option("--repo")] = Path(".")) -> None:
+    from llmcut.mcp.server import RepositoryContext
+
+    context = RepositoryContext(repo)
+    typer.echo(
+        json.dumps(
+            {
+                "transport": "stdio",
+                "repository": str(context.root),
+                "indexed_files": len(context.records),
+                "tools": 8,
+                "resources": ["llmcut://repository/map", "llmcut://context/<id>"],
+            },
+            indent=2,
+        )
+    )
+
+
+@mcp_app.command("doctor")
+def mcp_doctor(repo: Annotated[Path, typer.Option("--repo")] = Path(".")) -> None:
+    from llmcut.mcp.server import RepositoryContext
+
+    context = RepositoryContext(repo)
+    typer.echo(
+        "MCP stdio, repository allowlist, secret exclusion, and index: OK "
+        f"({len(context.records)} files)"
+    )
+
+
+@mcp_app.command("config")
+def mcp_config(repo: Annotated[Path, typer.Option("--repo")] = Path(".")) -> None:
+    typer.echo(
+        json.dumps({"command": "llmcut", "args": ["mcp", "serve", "--repo", str(repo.resolve())]})
+    )
+
+
+@codex_app.command("doctor")
+def codex_doctor() -> None:
+    from llmcut.integrations.codex import detect_codex
+
+    typer.echo(json.dumps(detect_codex().to_dict(), indent=2))
+
+
+@codex_app.command("config")
+def codex_config(repo: Annotated[Path, typer.Option("--repo")] = Path(".")) -> None:
+    from llmcut.integrations.codex import configuration_snippet
+
+    typer.echo(configuration_snippet(repo))
+
+
+@codex_app.command("init")
+def codex_init(
+    repo: Annotated[Path, typer.Option("--repo")] = Path("."),
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    remove: Annotated[bool, typer.Option("--remove")] = False,
+) -> None:
+    from llmcut.integrations.codex.config import configure_codex
+    from llmcut.integrations.codex.doctor import default_config_path
+
+    change = configure_codex(
+        config_path or default_config_path(), repo, remove=remove, dry_run=dry_run
+    )
+    typer.echo(
+        json.dumps(
+            {
+                "changed": change.changed,
+                "path": str(change.path),
+                "backup": str(change.backup) if change.backup else None,
+                "before": change.before,
+                "after": change.after,
+            },
+            indent=2,
+        )
+    )
+
+
+@codex_app.command("run")
+def codex_run(
+    task: Annotated[str, typer.Option("--task")],
+    model: Annotated[str, typer.Option("--model")],
+    reasoning: Annotated[str, typer.Option("--reasoning")],
+    repo: Annotated[Path, typer.Option("--repo")] = Path("."),
+    sandbox: Annotated[str, typer.Option("--sandbox")] = "workspace-write",
+    approvals: Annotated[str, typer.Option("--approvals")] = "on-request",
+) -> None:
+    import asyncio
+
+    from llmcut.integrations.codex import CodexAppServer
+
+    result = asyncio.run(
+        CodexAppServer().run(
+            task=task,
+            cwd=repo,
+            model=model,
+            reasoning=reasoning,
+            sandbox=sandbox,
+            approval_policy=approvals,
+        )
+    )
+    typer.echo(json.dumps(asdict(result), indent=2))
+
+
+@codex_app.command("eval")
+def codex_eval_alias(
+    suite: Annotated[Path, typer.Option("--suite")],
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+) -> None:
+    agent_evaluate("codex", suite, dry_run)
+
+
+@agent_app.command("eval")
+def agent_evaluate(
+    agent: Annotated[str, typer.Option("--agent")],
+    suite: Annotated[Path, typer.Option("--suite")],
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+) -> None:
+    import tomllib
+
+    if agent != "codex":
+        raise typer.BadParameter("only the isolated codex integration is supported")
+    value = tomllib.loads(suite.read_text())
+    tasks = value.get("tasks", [])
+    repetitions = int(value.get("repetitions", 3))
+    report = {
+        "agent": agent,
+        "experimental": True,
+        "dry_run": dry_run,
+        "tasks": len(tasks),
+        "repetitions_per_mode": repetitions,
+        "order": value.get("order", "baseline-first"),
+        "seed": value.get("seed"),
+        "modes": ["baseline", "optimized"],
+        "payload_usage": "locally_counted",
+        "agent_usage": "unavailable" if dry_run else "agent_reported_when_exposed",
+        "subscription_usage": "subscription_unavailable",
+    }
+    if not dry_run:
+        raise typer.BadParameter(
+            "live agent evaluation requires task-specific execution settings; "
+            "use codex run or --dry-run"
+        )
+    typer.echo(json.dumps(report, indent=2))
 
 
 def _record_optimization(store: EvidenceStore, mode: OptimizationMode, report: Any) -> None:

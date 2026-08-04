@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llmcut"
-version = "0.3.0"
+version = "0.4.0"
 description = "Provider-neutral, recoverable LLM context optimization and observability"
 readme = "README.md"
 license = "MIT"
@@ -12,10 +12,12 @@ requires-python = ">=3.12"
 authors = [{name = "llmcut contributors"}]
 dependencies = [
   "httpx>=0.28,<1",
+  "mcp>=1.27,<2",
   "starlette>=0.48,<1",
   "tree-sitter>=0.25,<1",
   "tree-sitter-javascript>=0.25,<1",
   "tree-sitter-typescript>=0.23,<1",
+  "tomlkit>=0.13,<1",
   "typer>=0.16,<1",
   "uvicorn>=0.35,<1",
 ]
@@ -54,6 +56,7 @@ ignore = ["S101", "S603", "S607"]
 python_version = "3.12"
 strict = true
 files = ["src", "tests"]
+exclude = ["tests/fixtures/benchmarks/"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers"
@@ -65,5 +68,5 @@ source = ["llmcut"]
 branch = true
 
 [tool.coverage.report]
-fail_under = 90
+fail_under = 92
 show_missing = true
