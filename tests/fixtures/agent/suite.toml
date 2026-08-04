@@ -1,13 +1,31 @@
+schema_version = "1"
+agent = "codex"
 repetitions = 3
-order = "randomized"
+order = "random"
 seed = 404
+timeout_seconds = 30
+codex_executable = "fake_codex.py"
+
+[execution]
+model = "fake-codex-model"
+reasoning_effort = "high"
+sandbox = "workspace-write"
+approval_policy = "never"
+environment_allowlist = ["LLMCUT_FAKE_SCENARIO"]
 
 [[tasks]]
 id = "python-callback-timeout"
-repository = "../benchmarks/python-defect"
-task = "Fix app/callback.py timeout units and run python tests"
-validation = ["python", "tests/validate_callback.py"]
-model = "caller-supplied"
-reasoning = "caller-supplied"
-sandbox = "caller-supplied"
-approvals = "caller-supplied"
+repository = "repositories/python-timeout"
+starting_ref = "HEAD"
+prompt = "Fix app/callback.py timeout units and run the required validation."
+validation = [["python", "tests/validate_callback.py"]]
+allowed_changes = ["app/callback.py"]
+forbidden_changes = ["app/config.py"]
+required_files = ["app/callback.py", "tests/validate_callback.py"]
+max_turns = 2
+
+[tasks.baseline]
+context = "full"
+
+[tasks.optimized]
+context = "managed-mcp"

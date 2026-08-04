@@ -88,13 +88,12 @@ def test_mcp_and_codex_inspection_commands(tmp_path: Path) -> None:
         ],
     )
     assert initialized.exit_code == 0 and not config.exists()
-    suite = tmp_path / "suite.toml"
-    suite.write_text('repetitions = 3\n[[tasks]]\nid = "one"\n')
+    suite = Path("tests/fixtures/agent/suite.toml")
     evaluation = runner.invoke(
         app,
         ["agent", "eval", "--agent", "codex", "--suite", str(suite), "--dry-run"],
     )
-    assert evaluation.exit_code == 0 and "subscription_unavailable" in evaluation.stdout
+    assert evaluation.exit_code == 0 and "subscription usage: unavailable" in evaluation.stdout
 
 
 def test_executable_eval_cli() -> None:

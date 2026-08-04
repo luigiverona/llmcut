@@ -98,6 +98,8 @@ import json, sys
 for line in sys.stdin:
     request = json.loads(line)
     method = request['method']
+    if method == 'initialized':
+        continue
     if method == 'initialize':
         result = {'capabilities': {}}
     elif method == 'thread/start':
@@ -137,6 +139,8 @@ import json, sys
 for line in sys.stdin:
     request = json.loads(line)
     method = request['method']
+    if method == 'initialized':
+        continue
     result = ({'thread': {'id': 'thread-1'}} if method == 'thread/start'
               else {'turn': {'id': 'turn-1'}} if method == 'turn/start' else {})
     print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}), flush=True)
