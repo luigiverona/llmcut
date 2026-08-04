@@ -1,17 +1,26 @@
 # Experimental Codex integration
 
-The integration uses supported Codex surfaces: MCP configuration supplies llmcut retrieval tools,
-and `codex app-server` JSON-RPC starts and observes explicit threads/turns. Core models do not import
-Codex and no Codex internals, ChatGPT credentials, or private backend APIs are intercepted.
+The default live backend is the official `openai-codex` Python SDK with its pinned Codex runtime.
+MCP configuration supplies llmcut retrieval tools. The direct `codex app-server` JSON-RPC client is
+an explicitly selected compatibility backend; the fake runtime exercises the same evaluator in CI.
+Core models do not import the SDK, and no Codex internals, credential contents, or private APIs are
+intercepted.
 
-`llmcut agent codex doctor` detects the executable, version, App Server, MCP support, configuration
+`llmcut agent codex doctor` detects the CLI and SDK versions, pinned runtime, App Server, MCP,
+authentication category, and live readiness. `llmcut agent codex auth` reports only authentication
+availability, method category, credential-store category, Codex-home category, and automation
+readiness. It never reads or prints the credential store. The Codex process receives only the
+environment needed to discover its existing session; validation receives its explicit suite
+allowlist and safe runtime defaults; MCP receives no Codex credentials.
+
+The doctor also detects the configuration
 location, and token-event availability without printing credentials. `config` prints a minimal TOML
 snippet. `init` is the only mutating command; it preserves unrelated TOML, validates before writing,
 backs up the original, atomically replaces the file with mode 0600, supports `--dry-run`, and can
 remove only llmcut's table.
 
-`run` sends explicit model, reasoning effort, working directory, sandbox, and approval policy to App
-Server and invalidates a run if Codex reports model rerouting. Operational events exclude private
+Execution sends explicit model, reasoning effort, working directory, sandbox, and approval policy
+through the SDK and invalidates a run if Codex reports model rerouting. Operational events exclude private
 reasoning. Token usage is `agent_reported` only when `thread/tokenUsage/updated` is emitted;
 otherwise it is unavailable. Subscription usage is always `subscription_unavailable` unless a
 future supported interface exposes it. No measured Codex or subscription savings are claimed by the
@@ -19,13 +28,15 @@ offline release suite.
 
 ## Executable A/B evaluation
 
-`llmcut agent eval --agent codex --suite suite.toml` performs real, non-dry-run App Server execution.
+`llmcut agent eval --agent codex --backend sdk --suite suite.toml` performs real, non-dry-run SDK execution.
 For every task and repetition it materializes separate baseline and optimized Git worktrees at the
 same commit, verifies tracked-file and execution-setting parity, starts a fresh App Server process,
-and runs validation directly as argv arrays. The baseline supplies full repository context; the
-optimized run supplies the task plus the same llmcut MCP server with managed retrieval enabled. Both
-runs retain the same tool semantics, model, reasoning effort, sandbox, approvals, limits, task, and
-validation.
+and runs validation directly as argv arrays. Under the default `standard-baseline` design both modes
+receive the same ordinary task prompt and repository access; baseline has no llmcut optimization,
+while optimized enables llmcut MCP, planning, and retrieval. Core execution settings remain equal,
+and the report identifies the MCP integration as the intervention. `tool-parity-baseline` loads the
+same MCP schemas in both modes for a separate experiment. `synthetic-full-context` retains the v0.4
+planner benchmark and is never mixed into standard Codex statistics.
 
 A version 1 suite has this shape:
 
@@ -42,6 +53,9 @@ model = "MODEL"
 reasoning_effort = "high"
 sandbox = "workspace-write"
 approval_policy = "never"
+backend = "sdk"
+auth_mode = "existing-session"
+comparison_design = "standard-baseline"
 environment_allowlist = []
 
 [[tasks]]
@@ -84,3 +98,8 @@ compatible App Server. A single smoke comparison is operational evidence, not st
 > `llmcut agent eval` can measure payload reduction and deterministic task outcomes. Agent token
 > reduction is reported only when Codex exposes supported usage events. Subscription usage is
 > unavailable unless explicitly exposed by the subscription system.
+
+The release-gating v0.5 authenticated suite completed six tasks with three repetitions per mode and
+no deterministic quality regressions. Supported agent usage events were available, but the median
+paired agent-input result showed no reduction. Accordingly llmcut makes no Codex token-reduction or
+subscription-reduction claim from this release.

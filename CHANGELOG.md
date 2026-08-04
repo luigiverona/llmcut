@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0 - 2026-08-03
+
+- Made the official pinned Python Codex SDK the default live automation backend while retaining the
+  direct App Server client as an explicit compatibility backend and the fake runtime for CI.
+- Added authentication preflight and separated Codex, MCP, and validation environments without
+  reading, copying, logging, or persisting credential contents.
+- Replaced the artificial full-repository Codex baseline with the same ordinary task prompt and
+  repository access used by optimized runs; synthetic planner measurement remains separately labeled.
+- Added explicit payload/agent/provider/subscription claim states, SDK-backed captures, representative
+  live suites, and small-sample paired statistics.
+- Completed an authenticated 36-run release suite with all deterministic outcomes passing. The suite
+  measured no overall agent-input reduction, so no Codex token or subscription saving is claimed.
+
 ## 0.4.0 - 2026-08-03
 
 - Replaced fixture-authored release token gates with digest-bound counts of exact provider-bound

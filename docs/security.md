@@ -13,6 +13,11 @@ range/search/result, and exposes neither command execution, environment values, 
 Codex configuration changes happen only on explicit `init`, retain a restrictive backup, preserve
 unrelated TOML, validate, and replace atomically.
 
+Codex authentication preflight invokes supported login-status diagnostics and never reads the auth
+cache. Existing-session discovery variables reach only the Codex process. Validation gets only its
+suite allowlist plus safe runtime defaults, and llmcut MCP receives no authentication variables.
+Explicit API-key or access-token modes accept an environment-variable name, never a secret value.
+
 Transport content, persisted evidence, and diagnostics are separate boundaries. Redaction applies
 only to persistence and diagnostics; it never mutates the provider-bound body. Credential values are
 read at request time from configured standard environment variables and are not included in stored

@@ -4,7 +4,8 @@
 coding agents, and API clients. It keeps the smallest confidently sufficient working set in model
 context, stores original evidence locally, and expands context when exclusion could affect quality.
 
-Version 0.4.0 adds trustworthy payload evaluation and experimental coding-agent integration while
+Version 0.5.0 adds representative authenticated Codex evaluation through the official Python Codex
+SDK while
 remaining conservative: **extreme is the default but is not lossy**. The
 optimizer does not change models, reasoning settings, tools, validation requirements, or source
 code. Low-confidence material stays in context; recoverable omission requires explicit,
@@ -210,9 +211,12 @@ token or subscription reduction is claimed without a live supported harness meas
 [MCP](docs/mcp.md) and [Codex integration](docs/integrations/codex.md).
 
 Executable A/B evaluation is available with
-`llmcut agent eval --agent codex --suite suite.toml`. It uses isolated paired worktrees, repeated and
-recorded ordering, App Server events, argv-safe deterministic validation, changed-file restrictions,
-and optional verified captures. Use `--dry-run` to validate the suite and execution plan. The
+`llmcut agent eval --agent codex --backend sdk --suite suite.toml`. It uses isolated paired
+worktrees, repeated and recorded ordering, official SDK events, argv-safe deterministic validation,
+changed-file restrictions, and optional verified captures. The standard baseline sends the same
+ordinary task prompt as the optimized run and does not concatenate repository files. The only
+intervention is llmcut MCP and managed retrieval in the optimized run. Use `--dry-run` to validate
+the suite and execution plan. The
 TypeScript benchmark includes a lockfile-controlled compiler/type-check plus runtime test rather
 than structural source inspection.
 
@@ -268,8 +272,8 @@ Quality parity must be measured per workload.
 ## Limitations
 
 - Closed clients with no proxy, API, or plugin integration point cannot be optimized.
-- No reduction in Codex, Claude Code, Gemini CLI, or another closed client's subscription usage is
-  claimed; those integrations are not implemented or measured.
+- Authenticated v0.5 Codex evaluation measured no overall agent-input reduction in its bounded live
+  suite. No Codex subscription reduction is claimed because subscription accounting was unavailable.
 - Provider tokenization varies by model; local estimates do not replace provider-reported usage.
 - Caching can lower billed input without lowering logical context.
 - `llmcut` does not bypass provider quotas or accounting.
