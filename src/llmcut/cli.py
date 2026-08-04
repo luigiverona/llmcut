@@ -534,9 +534,14 @@ def tokens_compare(
 
 
 @mcp_app.command("serve")
-def mcp_serve(repo: Annotated[Path, typer.Option("--repo")] = Path(".")) -> None:
+def mcp_serve(
+    repo: Annotated[Path, typer.Option("--repo")] = Path("."),
+    integration: Annotated[str, typer.Option("--integration")] = "optimized",
+) -> None:
     from llmcut.mcp.server import serve
 
+    if integration not in {"baseline", "optimized"}:
+        raise typer.BadParameter("integration must be baseline or optimized")
     serve(repo)
 
 
@@ -657,33 +662,81 @@ def agent_evaluate(
     agent: Annotated[str, typer.Option("--agent")],
     suite: Annotated[Path, typer.Option("--suite")],
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    repetitions: Annotated[int | None, typer.Option("--repetitions")] = None,
+    order: Annotated[str | None, typer.Option("--order")] = None,
+    seed: Annotated[int | None, typer.Option("--seed")] = None,
+    keep_worktrees: Annotated[bool, typer.Option("--keep-worktrees")] = False,
+    output_format: Annotated[str, typer.Option("--format")] = "text",
+    output: Annotated[Path | None, typer.Option("--output")] = None,
+    timeout: Annotated[float | None, typer.Option("--timeout")] = None,
+    fail_fast: Annotated[bool, typer.Option("--fail-fast")] = False,
+    capture: Annotated[Path | None, typer.Option("--capture")] = None,
 ) -> None:
-    import tomllib
+    import asyncio
+    import tempfile
 
     if agent != "codex":
         raise typer.BadParameter("only the isolated codex integration is supported")
-    value = tomllib.loads(suite.read_text())
-    tasks = value.get("tasks", [])
-    repetitions = int(value.get("repetitions", 3))
-    report = {
-        "agent": agent,
-        "experimental": True,
-        "dry_run": dry_run,
-        "tasks": len(tasks),
-        "repetitions_per_mode": repetitions,
-        "order": value.get("order", "baseline-first"),
-        "seed": value.get("seed"),
-        "modes": ["baseline", "optimized"],
-        "payload_usage": "locally_counted",
-        "agent_usage": "unavailable" if dry_run else "agent_reported_when_exposed",
-        "subscription_usage": "subscription_unavailable",
-    }
-    if not dry_run:
-        raise typer.BadParameter(
-            "live agent evaluation requires task-specific execution settings; "
-            "use codex run or --dry-run"
-        )
-    typer.echo(json.dumps(report, indent=2))
+    if output_format not in {"text", "json"}:
+        raise typer.BadParameter("format must be text or json")
+    from llmcut.captures import write_agent_capture
+    from llmcut.integrations.codex.executor import CodexEvaluator
+    from llmcut.integrations.codex.suite import load_suite
+
+    evaluator = CodexEvaluator(
+        load_suite(suite),
+        repetitions=repetitions,
+        order=order,
+        seed=seed,
+        timeout=timeout,
+        keep_worktrees=keep_worktrees,
+        fail_fast=fail_fast,
+    )
+    try:
+        evaluation = evaluator.plan() if dry_run else asyncio.run(evaluator.run())
+    except RuntimeError as exc:
+        typer.echo(f"unsupported environment: {exc}", err=True)
+        raise typer.Exit(3) from exc
+    report = evaluation.to_dict()
+    if capture is not None:
+        write_agent_capture(report, capture)
+        report["capture"] = str(capture.resolve())
+    rendered = (
+        json.dumps(report, indent=2) if output_format == "json" else _agent_text_report(report)
+    )
+    if output is not None:
+        output = output.resolve()
+        output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        descriptor, temporary = tempfile.mkstemp(prefix=f".{output.name}.", dir=output.parent)
+        try:
+            with os.fdopen(descriptor, "w") as handle:
+                handle.write(rendered + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, output)
+        except BaseException:
+            Path(temporary).unlink(missing_ok=True)
+            raise
+    else:
+        typer.echo(rendered)
+    if not dry_run and not bool(report["summary"].get("passed")):
+        raise typer.Exit(1)
+
+
+def _agent_text_report(report: dict[str, Any]) -> str:
+    summary = report.get("summary", {})
+    lines = [
+        f"Codex agent evaluation {report.get('run_id')}",
+        f"dry run: {report.get('dry_run')}",
+        f"runs: {summary.get('runs', summary.get('planned_runs', 0))}",
+        f"quality successes: {summary.get('quality_successes', 'not executed')}",
+        f"eligible comparisons: {summary.get('eligible_comparisons', 'not executed')}",
+        f"median payload reduction: {summary.get('median_payload_reduction_percent')}",
+        f"agent usage comparisons: {summary.get('agent_usage_comparisons', 0)}",
+        "subscription usage: unavailable",
+    ]
+    return "\n".join(lines)
 
 
 def _record_optimization(store: EvidenceStore, mode: OptimizationMode, report: Any) -> None:
