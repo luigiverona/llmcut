@@ -22,12 +22,7 @@ _SANDBOX_WIRE = {
     "workspace-write": "workspaceWrite",
     "danger-full-access": "dangerFullAccess",
 }
-_APPROVAL_WIRE = {
-    "never": "never",
-    "on-request": "onRequest",
-    "on-failure": "onFailure",
-    "unless-trusted": "unlessTrusted",
-}
+_APPROVAL_WIRE = {"never": "never", "on-request": "on-request", "untrusted": "untrusted"}
 
 
 @dataclass(slots=True)
@@ -159,7 +154,7 @@ class CodexAppServer:
                     "model": model,
                     "cwd": str(cwd.resolve()),
                     "approvalPolicy": _APPROVAL_WIRE[approval_policy],
-                    "sandbox": _SANDBOX_WIRE[sandbox],
+                    "sandbox": sandbox,
                     "serviceName": "llmcut_agent_eval",
                 },
             )

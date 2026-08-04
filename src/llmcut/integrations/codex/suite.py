@@ -12,7 +12,7 @@ from llmcut.model import digest_bytes
 SCHEMA_VERSION = "1"
 ORDERS = {"baseline-first", "optimized-first", "alternating", "random"}
 SANDBOXES = {"read-only", "workspace-write", "danger-full-access"}
-APPROVALS = {"never", "on-request", "on-failure", "unless-trusted"}
+APPROVALS = {"never", "on-request", "untrusted"}
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 

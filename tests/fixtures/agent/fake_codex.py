@@ -41,6 +41,28 @@ for line in sys.stdin:
             continue
         result: dict[str, object] = {"platformFamily": "unix", "platformOs": "linux"}
     elif method == "thread/start":
+        if request["params"].get("sandbox") not in {
+            "read-only",
+            "workspace-write",
+            "danger-full-access",
+        }:
+            send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request["id"],
+                    "error": {"code": -32600, "message": "invalid sandbox"},
+                }
+            )
+            continue
+        if request["params"].get("approvalPolicy") not in {"never", "on-request", "untrusted"}:
+            send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request["id"],
+                    "error": {"code": -32600, "message": "invalid approval policy"},
+                }
+            )
+            continue
         cwd = Path(request["params"]["cwd"])
         result = {"thread": {"id": "thread-1", "sessionId": "thread-1"}}
     elif method == "turn/start":
