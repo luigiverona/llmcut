@@ -1,0 +1,43 @@
+schema_version = "1"
+agent = "codex"
+repetitions = 1
+order = "random"
+seed = 6061
+timeout_seconds = 240
+repository_root = "../../fixtures/benchmarks"
+
+[execution]
+model = "gpt-5.6-terra"
+reasoning_effort = "low"
+sandbox = "workspace-write"
+approval_policy = "never"
+backend = "sdk"
+auth_mode = "existing-session"
+comparison_design = "standard-baseline"
+context_strategy = "adaptive"
+orientation_budget = 200
+retrieval_budget = 4096
+environment_allowlist = []
+
+[[tasks]]
+id = "ambiguous-repository"
+repository = "python-defect"
+prompt = "A callback deadline is interpreted in the wrong unit along the delivery call chain. Diagnose and fix it, then run the repository validation."
+validation = [["python", "tests/validate_callback.py"]]
+allowed_changes = ["app/callback.py"]
+forbidden_changes = ["app/config.py", "app/reporting.py"]
+required_files = ["app/callback.py", "tests/validate_callback.py"]
+[[tasks]]
+id = "large-diagnostic"
+repository = "large-failure"
+prompt = "Find the actionable failure among the diagnostics, correct the implementation, and run the repository validation."
+validation = [["python", "tests/validate.py"]]
+allowed_changes = ["app/parser.py"]
+required_files = ["test-output.log", "app/parser.py"]
+[[tasks]]
+id = "no-benefit-control"
+repository = "python-defect"
+prompt = "Fix app/callback.py timeout units and run python tests/validate_callback.py."
+validation = [["python", "tests/validate_callback.py"]]
+allowed_changes = ["app/callback.py"]
+required_files = ["app/callback.py"]

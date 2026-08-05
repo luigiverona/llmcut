@@ -1,0 +1,1 @@
+MAX_CALLBACKS = 20

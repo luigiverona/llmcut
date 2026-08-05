@@ -1,0 +1,2 @@
+class CallbackError(RuntimeError):
+    pass
