@@ -35,6 +35,7 @@ evidence_app = typer.Typer(help="Inspect and retrieve content-addressed evidence
 capture_app = typer.Typer(help="Inspect, verify, redact, replay, and delete captures.")
 tokens_app = typer.Typer(help="Count and verify exact provider-bound payloads.")
 mcp_app = typer.Typer(help="Serve and inspect the llmcut MCP integration.")
+context_app = typer.Typer(help="Plan trusted repository orientation for coding agents.")
 agent_app = typer.Typer(help="Evaluate supported coding-agent integrations.")
 codex_app = typer.Typer(help="Inspect and configure the experimental Codex integration.")
 app.add_typer(checkpoint_app, name="checkpoint")
@@ -42,6 +43,7 @@ app.add_typer(evidence_app, name="evidence")
 app.add_typer(capture_app, name="capture")
 app.add_typer(tokens_app, name="tokens")
 app.add_typer(mcp_app, name="mcp")
+app.add_typer(context_app, name="context")
 app.add_typer(agent_app, name="agent")
 agent_app.add_typer(codex_app, name="codex")
 
@@ -536,32 +538,100 @@ def tokens_compare(
 @mcp_app.command("serve")
 def mcp_serve(
     repo: Annotated[Path, typer.Option("--repo")] = Path("."),
-    integration: Annotated[str, typer.Option("--integration")] = "optimized",
+    integration: Annotated[str, typer.Option("--integration")] = "guided",
+    run_state: Annotated[Path | None, typer.Option("--run-state", hidden=True)] = None,
 ) -> None:
     from llmcut.mcp.server import serve
 
-    if integration not in {"baseline", "optimized"}:
-        raise typer.BadParameter("integration must be baseline or optimized")
-    serve(repo)
+    try:
+        serve(repo, integration, run_state)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 @mcp_app.command("inspect")
-def mcp_inspect(repo: Annotated[Path, typer.Option("--repo")] = Path(".")) -> None:
-    from llmcut.mcp.server import RepositoryContext
+def mcp_inspect(
+    repo: Annotated[Path, typer.Option("--repo")] = Path("."),
+    task: Annotated[str, typer.Option("--task")] = "Inspect repository context",
+    integration: Annotated[str, typer.Option("--integration")] = "guided",
+) -> None:
+    from llmcut.integrations.codex.context import plan_codex_context
+    from llmcut.mcp.server import GUIDED_INSTRUCTIONS, LEGACY_INSTRUCTIONS, tool_schema_bytes
 
-    context = RepositoryContext(repo)
+    try:
+        plan = plan_codex_context(repo, task, integration)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    selected = plan.selected_strategy.value
+    tools = (
+        ["llmcut_context"]
+        if selected == "guided"
+        else (
+            [
+                "llmcut_plan",
+                "llmcut_context_get",
+                "llmcut_source_range",
+                "llmcut_symbol_get",
+                "llmcut_dependencies",
+                "llmcut_log_search",
+                "llmcut_checkpoint_get",
+                "llmcut_tool_discover",
+            ]
+            if selected == "legacy-passive"
+            else []
+        )
+    )
+    instructions = (
+        GUIDED_INSTRUCTIONS
+        if selected == "guided"
+        else (LEGACY_INSTRUCTIONS if selected == "legacy-passive" else "")
+    )
     typer.echo(
         json.dumps(
             {
                 "transport": "stdio",
-                "repository": str(context.root),
-                "indexed_files": len(context.records),
-                "tools": 8,
-                "resources": ["llmcut://repository/map", "llmcut://context/<id>"],
+                "repository": str(repo.resolve()),
+                "requested_strategy": integration,
+                "selected_strategy": selected,
+                "indexed_files": plan.repository_file_count,
+                "exposed_tools": tools,
+                "schema_bytes": tool_schema_bytes(selected),
+                "schema_token_estimate": plan.mcp_schema_estimate,
+                "instruction_token_estimate": (
+                    max(1, (len(instructions.encode()) + 2) // 3) if instructions else 0
+                ),
+                "orientation_token_estimate": plan.orientation_token_estimate,
+                "selected_files": [item.path for item in plan.selected_files],
+                "deferred_files": list(plan.deferred_files),
+                "adaptive_reasons": list(plan.decision_reasons),
             },
             indent=2,
         )
     )
+
+
+@context_app.command("plan")
+def context_plan(
+    repo: Annotated[Path, typer.Option("--repo")] = Path("."),
+    task: Annotated[str, typer.Option("--task")] = "",
+    strategy: Annotated[str, typer.Option("--strategy")] = "adaptive",
+    orientation_budget: Annotated[int, typer.Option("--orientation-budget")] = 200,
+    retrieval_budget: Annotated[int, typer.Option("--retrieval-budget")] = 4_096,
+) -> None:
+    """Inspect a task-aware plan; source contents are never emitted."""
+    from llmcut.integrations.codex.context import plan_codex_context
+
+    try:
+        plan = plan_codex_context(
+            repo,
+            task,
+            strategy,
+            orientation_budget=orientation_budget,
+            retrieval_budget=retrieval_budget,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
 
 
 @mcp_app.command("doctor")
@@ -704,6 +774,8 @@ def agent_evaluate(
     backend: Annotated[str | None, typer.Option("--backend")] = None,
     auth_mode: Annotated[str | None, typer.Option("--auth-mode")] = None,
     auth_env_var: Annotated[str | None, typer.Option("--auth-env-var")] = None,
+    context_strategy: Annotated[str | None, typer.Option("--context-strategy")] = None,
+    pilot: Annotated[bool, typer.Option("--pilot")] = False,
 ) -> None:
     import asyncio
     import tempfile
@@ -727,6 +799,8 @@ def agent_evaluate(
         backend=backend,
         auth_mode=auth_mode,
         auth_env_var=auth_env_var,
+        context_strategy=context_strategy,
+        pilot=pilot,
     )
     try:
         evaluation = evaluator.plan() if dry_run else asyncio.run(evaluator.run())

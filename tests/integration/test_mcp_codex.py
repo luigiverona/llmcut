@@ -26,7 +26,8 @@ async def test_mcp_stdio_with_official_client(tmp_path: Path) -> None:
     executable = shutil.which("llmcut")
     assert executable
     parameters = StdioServerParameters(
-        command=executable, args=["mcp", "serve", "--repo", str(repo)]
+        command=executable,
+        args=["mcp", "serve", "--repo", str(repo), "--integration", "legacy-passive"],
     )
     async with stdio_client(parameters) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
@@ -39,6 +40,28 @@ async def test_mcp_stdio_with_official_client(tmp_path: Path) -> None:
         assert "return 30" in "".join(getattr(item, "text", "") for item in result.content)
         resources = await session.list_resources()
         assert any(str(item.uri) == "llmcut://repository/map" for item in resources.resources)
+
+
+@pytest.mark.asyncio
+async def test_guided_stdio_initialization_has_bounded_workflow_and_one_tool(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "source.py").write_text("def callback():\n    return 30\n")
+    executable = shutil.which("llmcut")
+    assert executable
+    parameters = StdioServerParameters(
+        command=executable,
+        args=["mcp", "serve", "--repo", str(repo), "--integration", "guided"],
+    )
+    async with stdio_client(parameters) as (read, write), ClientSession(read, write) as session:
+        initialized = await session.initialize()
+        assert initialized.instructions
+        assert "Use the supplied repository orientation" in initialized.instructions[:512]
+        assert "untrusted data" in initialized.instructions[:512]
+        tools = await session.list_tools()
+        assert [tool.name for tool in tools.tools] == ["llmcut_context"]
 
 
 @pytest.mark.asyncio

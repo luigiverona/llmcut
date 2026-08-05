@@ -22,7 +22,16 @@ from llmcut.integrations.codex.backend import (
     mcp_environment,
     validation_environment,
 )
-from llmcut.integrations.codex.executor import CodexEvaluator, _mcp_overrides, _safe_error
+from llmcut.integrations.codex.executor import (
+    CodexEvaluator,
+    _cleanup,
+    _mcp_overrides,
+    _prepare_seed,
+    _run,
+    _safe_error,
+    _usage_median,
+    _validate,
+)
 from llmcut.integrations.codex.suite import load_suite
 
 
@@ -205,3 +214,43 @@ def test_environment_reports_names_not_values(monkeypatch: pytest.MonkeyPatch) -
     assert "private-value" not in str(report)
     assert report["environment"]["allowlisted_names"] == ["TEST_SETTING"]
     assert os.environ["TEST_SETTING"] == "private-value"
+
+
+def test_executor_edge_paths_are_bounded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    suite = load_suite(Path("tests/fixtures/agent/suite.toml"))
+    evaluator = CodexEvaluator(suite, order="baseline-first")
+    assert evaluator._order()[0]["mode"] == "baseline"
+
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    (repository / "source.py").write_text("VALUE = 1\n")
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"], cwd=repository, check=True
+    )
+    subprocess.run(["git", "config", "user.name", "test"], cwd=repository, check=True)
+    subprocess.run(["git", "add", "."], cwd=repository, check=True)
+    subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repository, check=True)
+    task = replace(suite.tasks[0], repository=repository, required_files=())
+    seed, revision, manifest = _prepare_seed(tmp_path / "seed", task)
+    assert seed.is_dir() and revision and manifest
+
+    synthetic = replace(
+        suite,
+        execution=replace(suite.execution, comparison_design="synthetic-full-context"),
+        tasks=(task,),
+    )
+    prompt = CodexEvaluator(synthetic)._prompt(task, "baseline", seed)
+    assert "Full baseline repository context" in prompt and "VALUE = 1" in prompt
+    with pytest.raises(ValueError, match="refusing"):
+        _cleanup(tmp_path / "unsafe", [])
+    with pytest.raises(ValueError, match="command failed"):
+        _run(["python", "-c", "raise SystemExit(2)"], tmp_path)
+    assert _usage_median([{"inputTokens": "unavailable"}], ("inputTokens",)) is None
+
+    def timeout(*args: object, **kwargs: object) -> object:
+        raise subprocess.TimeoutExpired(["test"], 1, output="partial", stderr="late")
+
+    monkeypatch.setattr(subprocess, "run", timeout)
+    validation = _validate(task, seed, {}, 1)
+    assert validation[0].exit_code == 124

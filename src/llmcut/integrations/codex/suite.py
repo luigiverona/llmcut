@@ -31,6 +31,9 @@ class ExecutionConfig:
     auth_mode: str = "existing-session"
     auth_env_var: str | None = None
     comparison_design: str = "standard-baseline"
+    context_strategy: str = "adaptive"
+    orientation_budget: int = 200
+    retrieval_budget: int = 4_096
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +99,9 @@ def load_suite(path: Path) -> AgentSuite:
         str(execution_raw.get("auth_mode", "existing-session")),
         str(execution_raw["auth_env_var"]) if execution_raw.get("auth_env_var") else None,
         str(execution_raw.get("comparison_design", "standard-baseline")),
+        str(execution_raw.get("context_strategy", "adaptive")),
+        int(execution_raw.get("orientation_budget", 200)),
+        int(execution_raw.get("retrieval_budget", 4_096)),
     )
     if execution.sandbox not in SANDBOXES:
         raise ValueError(f"unsupported sandbox: {execution.sandbox}")
@@ -113,6 +119,13 @@ def load_suite(path: Path) -> AgentSuite:
         raise ValueError("auth_env_var must be an environment variable name")
     if execution.comparison_design not in COMPARISON_DESIGNS:
         raise ValueError(f"unsupported comparison design: {execution.comparison_design}")
+    from llmcut.integrations.codex.context import ContextStrategy
+
+    ContextStrategy.parse(execution.context_strategy)
+    if not 0 <= execution.orientation_budget <= 2_000:
+        raise ValueError("orientation_budget must be between 0 and 2000")
+    if not 1 <= execution.retrieval_budget <= 128_000:
+        raise ValueError("retrieval_budget must be between 1 and 128000")
     base = path.parent.resolve()
     repository_base = _repository_root(base, raw.get("repository_root"))
     tasks: list[AgentTask] = []
@@ -260,6 +273,9 @@ def _suite_dict(value: AgentSuite) -> dict[str, Any]:
             "auth_mode": value.execution.auth_mode,
             "auth_env_var": value.execution.auth_env_var,
             "comparison_design": value.execution.comparison_design,
+            "context_strategy": value.execution.context_strategy,
+            "orientation_budget": value.execution.orientation_budget,
+            "retrieval_budget": value.execution.retrieval_budget,
         },
         "tasks": [
             {

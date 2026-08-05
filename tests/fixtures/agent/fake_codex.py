@@ -11,6 +11,7 @@ from pathlib import Path
 
 scenario = os.environ.get("LLMCUT_FAKE_SCENARIO", "success")
 mode = os.environ.get("LLMCUT_EVAL_MODE", "baseline")
+context_strategy = os.environ.get("LLMCUT_CONTEXT_STRATEGY", "legacy-passive")
 cwd = Path(".")
 turns = 0
 
@@ -163,7 +164,7 @@ for line in sys.stdin:
                 },
             }
         )
-    if mode == "optimized":
+    if mode == "optimized" and context_strategy in {"guided", "legacy-passive"}:
         count = 2 if scenario == "repeated-mcp" else 1
         for number in range(count):
             send(
@@ -177,7 +178,11 @@ for line in sys.stdin:
                             "id": f"mcp-{turns}-{number}",
                             "type": "mcpToolCall",
                             "server": "llmcut",
-                            "tool": "llmcut_context_get",
+                            "tool": (
+                                "llmcut_context"
+                                if context_strategy == "guided"
+                                else "llmcut_context_get"
+                            ),
                             "status": "inProgress",
                             "arguments": {"context_id": "app/callback.py"},
                         },
@@ -195,7 +200,11 @@ for line in sys.stdin:
                             "id": f"mcp-{turns}-{number}",
                             "type": "mcpToolCall",
                             "server": "llmcut",
-                            "tool": "llmcut_context_get",
+                            "tool": (
+                                "llmcut_context"
+                                if context_strategy == "guided"
+                                else "llmcut_context_get"
+                            ),
                             "status": "completed",
                             "result": {
                                 "content": [{"type": "text", "text": "verified fixture evidence"}],

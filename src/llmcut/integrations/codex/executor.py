@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import random
 import re
 import shutil
@@ -23,6 +24,11 @@ from llmcut.integrations.codex.backend import (
     codex_agent_environment,
     create_backend,
     validation_environment,
+)
+from llmcut.integrations.codex.context import (
+    CodexContextPlan,
+    ContextStrategy,
+    plan_codex_context,
 )
 from llmcut.integrations.codex.doctor import detect_codex
 from llmcut.integrations.codex.suite import AgentSuite, AgentTask
@@ -90,6 +96,14 @@ class AgentRunResult:
     llmcut_mcp_payload: int = 0
     observable_agent_payload: int | None = None
     comparison_design: str = "standard-baseline"
+    context_strategy: str = "off"
+    orientation_tokens: int = 0
+    schema_tokens: int = 0
+    developer_instruction_tokens: int = 0
+    retrieval_request_tokens: int = 0
+    retrieval_result_tokens: int = 0
+    context_decision: dict[str, Any] = field(default_factory=dict)
+    discovery_observation: dict[str, Any] = field(default_factory=dict)
 
     @property
     def quality_passed(self) -> bool:
@@ -129,6 +143,7 @@ class AgentEvaluation:
     runtime_version: str | None = None
     authentication: dict[str, Any] = field(default_factory=dict)
     comparison_design: str = "standard-baseline"
+    pilot: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -149,6 +164,8 @@ class CodexEvaluator:
         backend: str | None = None,
         auth_mode: str | None = None,
         auth_env_var: str | None = None,
+        context_strategy: str | None = None,
+        pilot: bool = False,
     ) -> None:
         self.suite = suite
         self.repetitions = repetitions or suite.repetitions
@@ -161,6 +178,13 @@ class CodexEvaluator:
         self.backend_name = backend or suite.execution.backend
         self.auth_mode = auth_mode or suite.execution.auth_mode
         self.auth_env_var = auth_env_var or suite.execution.auth_env_var
+        self.context_strategy_override = (
+            ContextStrategy.parse(context_strategy) if context_strategy is not None else None
+        )
+        self.context_strategy = self.context_strategy_override or ContextStrategy.parse(
+            suite.execution.context_strategy
+        )
+        self.pilot = pilot
         self._backend: CodexBackend = create_backend(self.backend_name, suite.executable)
         if not 1 <= self.repetitions <= 20:
             raise ValueError("repetitions override must be between 1 and 20")
@@ -211,6 +235,7 @@ class CodexEvaluator:
             True,
             backend=self.backend_name,
             comparison_design=self.suite.execution.comparison_design,
+            pilot=self.pilot,
         )
 
     async def run(self, cancellation: asyncio.Event | None = None) -> AgentEvaluation:
@@ -253,6 +278,8 @@ class CodexEvaluator:
                     break
             task_reports = _task_reports(self.suite.tasks, results)
             summary = _summary(task_reports, results)
+            summary["pilot"] = self.pilot
+            summary["release_statistics_eligible"] = not self.pilot
             completed_at = datetime.now(UTC).isoformat()
             return AgentEvaluation(
                 "1",
@@ -287,6 +314,7 @@ class CodexEvaluator:
                 backend_capabilities.runtime_version,
                 authentication.to_dict(),
                 self.suite.execution.comparison_design,
+                self.pilot,
             )
         finally:
             if not self.keep_worktrees:
@@ -324,13 +352,40 @@ class CodexEvaluator:
             return all(item.exit_code == 0 for item in current)
 
         prompt = self._prompt(task, mode, worktree)
-        mcp_overrides = self._mcp_overrides_for_mode(worktree, mode)
+        requested_strategy = self._context_strategy(task, mode)
+        plan = plan_codex_context(
+            worktree,
+            task.prompt,
+            requested_strategy,
+            orientation_budget=self.suite.execution.orientation_budget,
+            retrieval_budget=self.suite.execution.retrieval_budget,
+            state_dir=worktree.parent / ".context-index",
+        )
+        state_path: Path | None = None
+        mcp_overrides: tuple[str, ...] = ()
+        if plan.selected_strategy is ContextStrategy.GUIDED:
+            state_path = _write_run_state(worktree.parent, worktree, plan)
+            mcp_overrides = _mcp_overrides(worktree, plan.selected_strategy.value, state_path)
+        elif plan.selected_strategy is ContextStrategy.LEGACY_PASSIVE:
+            mcp_overrides = _mcp_overrides(worktree, plan.selected_strategy.value)
+        developer_overrides = (
+            (f"developer_instructions={json.dumps(plan.orientation_text)}",)
+            if plan.orientation_text
+            else ()
+        )
         started = time.monotonic()
         run: CodexRun | None = None
         error = None
         timed_out = False
         cancelled = False
         try:
+            agent_environment = codex_agent_environment(
+                self.suite.execution.environment_allowlist,
+                mode,
+                self.auth_mode,
+                self.auth_env_var,
+            )
+            agent_environment["LLMCUT_CONTEXT_STRATEGY"] = plan.selected_strategy.value
             run = await self._backend.run(
                 task=prompt,
                 cwd=worktree,
@@ -340,13 +395,8 @@ class CodexEvaluator:
                 approval_policy=str(settings["approval_policy"]),
                 timeout=self.timeout,
                 max_turns=task.max_turns,
-                environment=codex_agent_environment(
-                    self.suite.execution.environment_allowlist,
-                    mode,
-                    self.auth_mode,
-                    self.auth_env_var,
-                ),
-                config_overrides=mcp_overrides,
+                environment=agent_environment,
+                config_overrides=developer_overrides + mcp_overrides,
                 validation_callback=validate,
                 cancellation=cancellation,
             )
@@ -356,6 +406,9 @@ class CodexEvaluator:
             cancelled, error = True, "evaluation cancelled"
         except Exception as exc:
             error = _safe_error(exc)
+        finally:
+            if state_path is not None:
+                state_path.unlink(missing_ok=True)
         if not validations:
             validations.extend(
                 _validate(
@@ -419,6 +472,17 @@ class CodexEvaluator:
             mcp_payload,
             None,
             self.suite.execution.comparison_design,
+            plan.selected_strategy.value,
+            plan.orientation_token_estimate,
+            plan.mcp_schema_estimate,
+            plan.orientation_token_estimate,
+            sum(
+                max(1, len(json.dumps(item["data"], sort_keys=True).encode()) // 3)
+                for item in calls
+            ),
+            sum(int(item["data"].get("result_bytes", 0)) // 3 for item in mcp_events),
+            asdict(plan.adaptive_decision),
+            _discovery_metrics(events),
         )
 
     def _authentication_status(self) -> AuthenticationStatus:
@@ -441,7 +505,31 @@ class CodexEvaluator:
         design = self.suite.execution.comparison_design
         if design == "standard-baseline" and mode == "baseline":
             return ()
-        return _mcp_overrides(worktree, mode)
+        strategy = "legacy-passive" if mode == "optimized" else "legacy-passive"
+        return _mcp_overrides(worktree, strategy)
+
+    def _context_strategy(self, task: AgentTask, mode: str) -> ContextStrategy:
+        if mode == "baseline" and self.suite.execution.comparison_design == "standard-baseline":
+            return ContextStrategy.OFF
+        if self.context_strategy_override is not None:
+            return self.context_strategy_override
+        overrides = task.baseline if mode == "baseline" else task.optimized
+        value = overrides.get(
+            "context_strategy",
+            overrides.get("context", self.suite.execution.context_strategy),
+        )
+        if (
+            mode == "optimized"
+            and "context_strategy" not in overrides
+            and "context" not in overrides
+        ):
+            value = self.context_strategy.value
+        aliases = {
+            "baseline": "off",
+            "optimized": "legacy-passive",
+            "managed-mcp": "legacy-passive",
+        }
+        return ContextStrategy.parse(aliases.get(str(value), str(value)))
 
     def _settings(self, task: AgentTask, mode: str) -> dict[str, Any]:
         overrides = task.baseline if mode == "baseline" else task.optimized
@@ -459,7 +547,7 @@ class CodexEvaluator:
             "timeout": self.timeout,
             "max_turns": task.max_turns,
             "validation": task.validation,
-            "context_strategy": overrides.get("context", mode),
+            "context_strategy": self._context_strategy(task, mode).value,
         }
 
     def _order(self) -> list[dict[str, Any]]:
@@ -502,6 +590,8 @@ class CodexEvaluator:
             "backend": self.backend_name,
             "authentication_mode": self.auth_mode,
             "comparison_design": self.suite.execution.comparison_design,
+            "context_strategy": self.context_strategy.value,
+            "pilot": self.pilot,
             "codex_agent_environment": "authentication discovery variables allowed; values omitted",
             "validation_environment": "suite allowlist plus safe runtime defaults; values omitted",
             "mcp_environment": "Codex MCP allowlist; credential variables not forwarded",
@@ -572,14 +662,80 @@ def _baseline_prompt(task: AgentTask, worktree: Path) -> str:
     return "".join(chunks)
 
 
-def _mcp_overrides(worktree: Path, mode: str) -> tuple[str, ...]:
-    args = json.dumps(["mcp", "serve", "--repo", str(worktree), "--integration", mode])
+def _mcp_overrides(worktree: Path, strategy: str, run_state: Path | None = None) -> tuple[str, ...]:
+    values = ["mcp", "serve", "--repo", str(worktree), "--integration", strategy]
+    if run_state is not None:
+        values.extend(("--run-state", str(run_state)))
+    args = json.dumps(values)
     return (
         'mcp_servers.llmcut.command="llmcut"',
         f"mcp_servers.llmcut.args={args}",
         "mcp_servers.llmcut.env_vars=[]",
         "mcp_servers.llmcut.required=true",
     )
+
+
+def _write_run_state(parent: Path, worktree: Path, plan: CodexContextPlan) -> Path:
+    parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(parent, 0o700)
+    payload = {
+        "strategy": plan.selected_strategy.value,
+        "task_digest": plan.task_digest,
+        "repository_revision": plan.repository_revision,
+        "repository_root": str(worktree.resolve()),
+        "plan": plan.to_dict(),
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    envelope = json.dumps(
+        {"digest": digest_bytes(canonical), "payload": payload},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    path = parent / f".llmcut-run-state-{uuid.uuid4().hex}.json"
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w") as handle:
+            handle.write(envelope)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    return path
+
+
+def _discovery_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
+    commands = [
+        str(item["data"].get("command", ""))
+        for item in events
+        if item.get("kind") == "command_execution"
+    ]
+    reads: list[str] = []
+    searches = 0
+    listings = 0
+    for command in commands:
+        if re.search(r"(^|\s)(rg|grep|find)(\s|$)", command):
+            searches += 1
+        if re.search(r"(^|\s)(ls|tree)(\s|$)", command):
+            listings += 1
+        match = re.search(r"(?:cat|sed\s+-n\s+\S+)\s+([A-Za-z0-9_./-]+)", command)
+        if match:
+            reads.append(match.group(1))
+    first = "unavailable"
+    if commands:
+        first = "shell_search" if searches else "directory_listing" if listings else "shell_command"
+    return {
+        "state": "partially_observed" if commands else "unavailable",
+        "shell_commands": len(commands),
+        "file_reads": len(reads),
+        "searches": searches,
+        "directory_listings": listings,
+        "first_repository_discovery_action": first,
+        "unique_files_inspected": len(set(reads)),
+        "repeated_file_reads": len(reads) - len(set(reads)),
+        "command_output_bytes": "unavailable",
+        "files_inspected_before_first_edit": "partially_observed" if reads else "unavailable",
+    }
 
 
 def _validate(
@@ -709,7 +865,13 @@ def _task_reports(
                     "eligible": eligible,
                     "settings_parity": settings_parity,
                     "core_execution_parity": "passed" if settings_parity else "failed",
+                    "user_task_parity": baseline.user_task_payload == optimized.user_task_payload,
+                    "repository_parity": (
+                        baseline.starting_manifest_digest == optimized.starting_manifest_digest
+                    ),
+                    "validation_parity": baseline.validation_passed == optimized.validation_passed,
                     "intervention_difference": "llmcut context integration",
+                    "optimized_context_strategy": optimized.context_strategy,
                     "comparison_design": baseline.comparison_design,
                     "quality_parity": quality_parity,
                     "payload_reduction_percent": payload_reduction,
@@ -783,6 +945,8 @@ def _aggregate(results: list[AgentRunResult]) -> dict[str, Any]:
 
 
 def _summary(tasks: list[dict[str, Any]], results: list[AgentRunResult]) -> dict[str, Any]:
+    from llmcut.mcp.server import tool_schema_bytes
+
     comparisons = [pair for task in tasks for pair in task["comparisons"]]
     eligible = [pair for pair in comparisons if pair.get("eligible")]
     reductions = [
@@ -792,7 +956,7 @@ def _summary(tasks: list[dict[str, Any]], results: list[AgentRunResult]) -> dict
     ]
     agent = [pair for pair in eligible if pair.get("agent_usage_reduction_percent") is not None]
     agent_reductions = [float(pair["agent_usage_reduction_percent"]) for pair in agent]
-    return {
+    summary: dict[str, Any] = {
         "runs": len(results),
         "quality_successes": sum(item.quality_passed for item in results),
         "regressions": sum(
@@ -823,6 +987,72 @@ def _summary(tasks: list[dict[str, Any]], results: list[AgentRunResult]) -> dict
         and all(item.quality_passed for item in results)
         and len(eligible) == len(comparisons),
     }
+    non_control = [task for task in tasks if "control" not in str(task["id"]).lower()]
+    representative_pairs = [
+        pair
+        for task in non_control
+        for pair in task["comparisons"]
+        if pair.get("eligible") and pair.get("agent_usage_reduction_percent") is not None
+    ]
+    representative_reductions = [
+        float(pair["agent_usage_reduction_percent"]) for pair in representative_pairs
+    ]
+    task_medians = {
+        str(task["id"]): median(values)
+        for task in non_control
+        if (
+            values := [
+                float(pair["agent_usage_reduction_percent"])
+                for pair in task["comparisons"]
+                if pair.get("eligible") and pair.get("agent_usage_reduction_percent") is not None
+            ]
+        )
+    }
+    control_runs = [item for item in results if "control" in item.task_id.lower()]
+    control_safe = all(
+        item.mode != "optimized" or item.context_strategy == "off" for item in control_runs
+    )
+    schema_safe = all(
+        item.context_strategy != "guided"
+        or item.schema_tokens
+        <= max(1, (tool_schema_bytes(ContextStrategy.LEGACY_PASSIVE) + 2) // 3) * 0.3
+        for item in results
+    )
+    intervention_observed = any(
+        item.mode == "optimized" and (item.retrieval_calls > 0 or item.orientation_tokens > 0)
+        for item in results
+    )
+    summary.update(
+        {
+            "representative_tasks": len(non_control),
+            "representative_agent_usage_comparisons": len(representative_pairs),
+            "representative_median_agent_input_reduction_percent": (
+                median(representative_reductions) if representative_reductions else None
+            ),
+            "representative_positive_pair_rate": (
+                sum(value > 0 for value in representative_reductions)
+                / len(representative_reductions)
+                if representative_reductions
+                else None
+            ),
+            "representative_task_medians": task_medians,
+            "no_benefit_control_safe": control_safe,
+            "guided_schema_reduction_passed": schema_safe,
+            "context_intervention_observed": intervention_observed,
+            "release_measurement_gates_passed": bool(representative_reductions)
+            and len(non_control) >= 4
+            and all(len(task["comparisons"]) >= 3 for task in non_control)
+            and median(representative_reductions) >= 5
+            and sum(value > 0 for value in representative_reductions)
+            / len(representative_reductions)
+            >= 0.6
+            and all(value >= -5 for value in task_medians.values())
+            and control_safe
+            and schema_safe
+            and intervention_observed,
+        }
+    )
+    return summary
 
 
 def _usage_median(values: list[dict[str, Any]], keys: tuple[str, ...]) -> float | None:

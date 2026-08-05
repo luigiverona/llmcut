@@ -12,7 +12,7 @@ from typer.testing import CliRunner
 from llmcut.captures import verify_capture
 from llmcut.cli import app
 from llmcut.integrations.codex.events import normalize_event
-from llmcut.integrations.codex.executor import CodexEvaluator
+from llmcut.integrations.codex.executor import CodexEvaluator, _discovery_metrics
 from llmcut.integrations.codex.suite import load_suite
 
 SUITE = Path("tests/fixtures/agent/suite.toml").resolve()
@@ -169,6 +169,37 @@ def test_repeated_mcp_calls_and_settings_mismatch() -> None:
     evaluation = asyncio.run(CodexEvaluator(changed_suite).run())
     comparison = evaluation.tasks[0]["comparisons"][0]
     assert not comparison["eligible"] and not comparison["settings_parity"]
+
+
+def test_active_context_strategies_and_discovery_accounting() -> None:
+    suite = replace(load_suite(SUITE), repetitions=1)
+    guided = asyncio.run(CodexEvaluator(suite, context_strategy="guided").run())
+    guided_run = next(run for run in guided.tasks[0]["runs"] if run["mode"] == "optimized")
+    assert guided_run["context_strategy"] == "guided"
+    assert guided_run["orientation_tokens"] <= 200
+    assert guided_run["schema_tokens"] > 0
+    assert guided_run["mcp_calls"] == 1
+    assert not list(guided_run.get("worktree") or "")
+
+    orientation = asyncio.run(CodexEvaluator(suite, context_strategy="orientation").run())
+    orientation_run = next(
+        run for run in orientation.tasks[0]["runs"] if run["mode"] == "optimized"
+    )
+    assert orientation_run["context_strategy"] == "orientation"
+    assert orientation_run["orientation_tokens"] > 0
+    assert orientation_run["schema_tokens"] == 0 and orientation_run["mcp_calls"] == 0
+
+    metrics = _discovery_metrics(
+        [
+            {"kind": "command_execution", "data": {"command": "rg callback app"}},
+            {"kind": "command_execution", "data": {"command": "ls app"}},
+            {"kind": "command_execution", "data": {"command": "cat app/callback.py"}},
+            {"kind": "command_execution", "data": {"command": "cat app/callback.py"}},
+        ]
+    )
+    assert metrics["state"] == "partially_observed"
+    assert metrics["searches"] == 1 and metrics["directory_listings"] == 1
+    assert metrics["unique_files_inspected"] == 1 and metrics["repeated_file_reads"] == 1
 
 
 def test_timeout_cancellation_and_event_redaction() -> None:
