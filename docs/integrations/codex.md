@@ -1,5 +1,24 @@
 # Experimental Codex integration
 
+## Adaptive context routing (v0.6 candidate)
+
+`off` is ordinary Codex and the standard baseline. `orientation` supplies deterministic,
+metadata-only working-set guidance through Codex developer instructions without MCP. `guided` adds
+the single compact `llmcut_context` tool. `adaptive` chooses among those three from repository size,
+task specificity, candidate confidence, large evidence, and estimated cost. `legacy-passive`
+preserves the v0.5 eight-tool surface for deprecated diagnostic comparison.
+
+Orientation contains only relative paths, indexed symbols and relationships, sizes, digests, and
+planner reasons. It defaults to a hard 200 estimated-token budget and is discarded if it cannot fit.
+It never contains source text, absolute paths, credentials, or validation policy. Inspection via
+`llmcut context plan` and `llmcut mcp inspect` emits no source contents. Evaluation supports
+`--context-strategy adaptive` and release-ineligible `--pilot` runs.
+
+`v0.5.0` measured no normal Codex token reduction. The passive MCP integration added schemas but was
+not invoked by Codex. `v0.6.0` uses task-aware orientation, compact retrieval, and adaptive opt-out.
+It is released only if authenticated agent-reported usage demonstrates improvement without quality
+regression.
+
 The default live backend is the official `openai-codex` Python SDK with its pinned Codex runtime.
 MCP configuration supplies llmcut retrieval tools. The direct `codex app-server` JSON-RPC client is
 an explicitly selected compatibility backend; the fake runtime exercises the same evaluator in CI.

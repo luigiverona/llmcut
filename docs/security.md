@@ -1,5 +1,10 @@
 # Security and privacy model
 
+Adaptive Codex plan state is bounded, mode 0600, stored below a mode-0700 disposable evaluation
+root, and digest-bound. The MCP server verifies its repository allowlist. Cleanup removes it on
+success, failure, cancellation, and timeout. Only the task digest is stored; task text is not placed
+in MCP process arguments, routine diagnostics, or captures.
+
 ## Captures, MCP, and coding agents
 
 Captures are sensitive, digest-verified artifacts. Content persistence is explicit, locations are

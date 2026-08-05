@@ -4,8 +4,8 @@
 coding agents, and API clients. It keeps the smallest confidently sufficient working set in model
 context, stores original evidence locally, and expands context when exclusion could affect quality.
 
-Version 0.5.0 adds representative authenticated Codex evaluation through the official Python Codex
-SDK while
+The unreleased v0.6 work adds adaptive Codex context routing through the official Python Codex SDK
+while
 remaining conservative: **extreme is the default but is not lossy**. The
 optimizer does not change models, reasoning settings, tools, validation requirements, or source
 code. Low-confidence material stays in context; recoverable omission requires explicit,
@@ -274,6 +274,10 @@ Quality parity must be measured per workload.
 - Closed clients with no proxy, API, or plugin integration point cannot be optimized.
 - Authenticated v0.5 Codex evaluation measured no overall agent-input reduction in its bounded live
   suite. No Codex subscription reduction is claimed because subscription accounting was unavailable.
+- `v0.5.0` measured no normal Codex token reduction. The passive MCP integration added schemas but
+  was not invoked by Codex.
+- `v0.6.0` uses task-aware orientation, compact retrieval, and adaptive opt-out. It is released only
+  if authenticated agent-reported usage demonstrates improvement without quality regression.
 - Provider tokenization varies by model; local estimates do not replace provider-reported usage.
 - Caching can lower billed input without lowering logical context.
 - `llmcut` does not bypass provider quotas or accounting.

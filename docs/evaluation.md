@@ -1,5 +1,12 @@
 # Trustworthy evaluation
 
+Version 0.6 separates quota-conscious pilots from release statistics. Pilots compare `off`,
+`orientation`, `guided`, and `legacy-passive` and are always labeled release-ineligible. A release
+suite requires at least four non-control tasks, three repetitions per mode, median paired
+agent-input reduction of 5%, 60% positive pairs, no task median below -5%, safe no-benefit behavior,
+quality parity, a 70% guided-schema reduction, and observed intervention. Estimated component costs
+are diagnostics and are never subtracted from agent-reported totals.
+
 Version 0.3's recorded responses were deterministic runtime fixtures, not independent measurement:
 their editable `usage` fields could affect reported savings and their principal quality assertions
 were short response matches. Version 0.4 retains those fixtures only as `untrusted_fixture` parser

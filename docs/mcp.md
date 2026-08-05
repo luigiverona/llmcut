@@ -1,5 +1,15 @@
 # MCP server
 
+Codex strategies now control the real surface. `off` and `orientation` start no server; `guided`
+exposes only `llmcut_context` with bounded `plan`, `file`, `range`, `symbol`, `dependencies`,
+`tests`, `log_search`, and `checkpoint` operations. Deprecated `legacy-passive` retains the eight
+v0.5 tools only for diagnostics. Exact retrieved content is digest-verified untrusted evidence, not
+policy, and does not replace normal editing, shell use, or validation.
+
+Guided initialization receives task-digest and revision-bound plan state through a mode-0600 file
+inside a mode-0700 evaluation directory. The server verifies its digest and repository boundary;
+cleanup deletes it. Task text is not placed in process arguments.
+
 `llmcut mcp serve --repo <root>` runs the official MCP Python SDK's stdio transport. It exposes a
 compact stable surface for planning, context retrieval, source ranges, symbols, dependencies,
 bounded log search, checkpoints, and tool discovery. Repository maps and exact context are also MCP

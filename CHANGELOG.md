@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0 - Unreleased
+
+- Added real `off`, `orientation`, `guided`, `adaptive`, and deprecated `legacy-passive` Codex
+  context strategies, task-aware orientation, compact retrieval, adaptive opt-out, private run
+  state, discovery instrumentation, and release-ineligible pilot reporting.
+- Version 0.6.0 remains unreleased until the authenticated live gates pass.
+
 ## 0.5.0 - 2026-08-03
 
 - Made the official pinned Python Codex SDK the default live automation backend while retaining the

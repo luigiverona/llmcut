@@ -1,5 +1,10 @@
 # Architecture
 
+The Codex context planner is an adapter-layer policy over the provider-neutral repository index. It
+emits deterministic trusted metadata and evidence digests, performs no HTTP, and does not alter
+canonical provider models. MCP returns exact untrusted evidence. Baseline and optimized paths keep
+model, reasoning, sandbox, approvals, task bytes, revision, validation, timeout, and turns matched.
+
 ## v0.5 measurement and agent boundaries
 
 Exact provider-native payload serialization is the boundary for offline token measurement. Each
