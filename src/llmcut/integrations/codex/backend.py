@@ -65,8 +65,11 @@ class AppServerBackend:
 class SDKBackend:
     """Official ``openai-codex`` SDK backend using its pinned runtime by default."""
 
-    def __init__(self, executable: str | None = None) -> None:
+    def __init__(
+        self, executable: str | None = None, *, allow_hook_trust_bypass: bool = False
+    ) -> None:
         self.executable = executable
+        self.allow_hook_trust_bypass = allow_hook_trust_bypass
         self._active_turn: Any = None
         self._active_client: Any = None
 
@@ -167,8 +170,17 @@ class SDKBackend:
         if reasoning not in supported_efforts:
             raise ValueError(f"unsupported Codex reasoning effort: {reasoning}")
         effort = ReasoningEffort(reasoning)
+        launch_args: tuple[str, ...] | None = None
+        if self.allow_hook_trust_bypass:
+            executable = self.executable or _installed_codex_binary()
+            values = [executable, "--dangerously-bypass-hook-trust"]
+            for override in config_overrides:
+                values.extend(("--config", override))
+            values.extend(("app-server", "--listen", "stdio://"))
+            launch_args = tuple(values)
         config = CodexConfig(
             codex_bin=self.executable,
+            launch_args_override=launch_args,
             config_overrides=config_overrides,
             cwd=str(cwd.resolve()),
             env=environment,
@@ -259,16 +271,27 @@ class FakeBackend(SDKBackend):
     """SDK-backed test transport using an explicit local fake Codex runtime."""
 
 
-def create_backend(name: str, executable: str = "codex") -> CodexBackend:
+def create_backend(
+    name: str, executable: str = "codex", *, allow_hook_trust_bypass: bool = False
+) -> CodexBackend:
     if name == "sdk":
-        return SDKBackend(None if executable == "codex" else executable)
+        return SDKBackend(
+            None if executable == "codex" else executable,
+            allow_hook_trust_bypass=allow_hook_trust_bypass,
+        )
     if name == "app-server":
         return AppServerBackend(executable)
     if name == "fake":
         if executable == "codex":
             raise ValueError("fake backend requires a configured test executable")
-        return FakeBackend(executable)
+        return FakeBackend(executable, allow_hook_trust_bypass=allow_hook_trust_bypass)
     raise ValueError(f"unsupported Codex backend: {name}")
+
+
+def _installed_codex_binary() -> str:
+    from importlib.resources import files
+
+    return str(files("codex_cli_bin").joinpath("bin", "codex"))
 
 
 def _sdk_notification(notification: Any) -> dict[str, Any]:

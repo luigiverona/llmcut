@@ -35,6 +35,8 @@ from llmcut.integrations.codex.suite import AgentSuite, AgentTask
 from llmcut.model import digest_bytes
 from llmcut.tokens.estimate import ConservativeEstimator
 
+HOOK_REPLACEMENT_VERIFIED = False
+
 MAX_OUTPUT_BYTES = 64 * 1024
 MAX_DIFF_BYTES = 1024 * 1024
 
@@ -104,6 +106,7 @@ class AgentRunResult:
     retrieval_result_tokens: int = 0
     context_decision: dict[str, Any] = field(default_factory=dict)
     discovery_observation: dict[str, Any] = field(default_factory=dict)
+    hook_observation: dict[str, Any] = field(default_factory=dict)
 
     @property
     def quality_passed(self) -> bool:
@@ -166,6 +169,7 @@ class CodexEvaluator:
         auth_env_var: str | None = None,
         context_strategy: str | None = None,
         pilot: bool = False,
+        allow_hook_trust_bypass: bool = False,
     ) -> None:
         self.suite = suite
         self.repetitions = repetitions or suite.repetitions
@@ -185,7 +189,12 @@ class CodexEvaluator:
             suite.execution.context_strategy
         )
         self.pilot = pilot
-        self._backend: CodexBackend = create_backend(self.backend_name, suite.executable)
+        self.allow_hook_trust_bypass = allow_hook_trust_bypass
+        self._backend: CodexBackend = create_backend(
+            self.backend_name,
+            suite.executable,
+            allow_hook_trust_bypass=allow_hook_trust_bypass,
+        )
         if not 1 <= self.repetitions <= 20:
             raise ValueError("repetitions override must be between 1 and 20")
         if self.order_policy not in {"baseline-first", "optimized-first", "alternating", "random"}:
@@ -373,6 +382,23 @@ class CodexEvaluator:
             if plan.orientation_text
             else ()
         )
+        hook_overrides: tuple[str, ...] = ()
+        hook_state: Path | None = None
+        hook_metrics: Path | None = None
+        if plan.selected_strategy.intervention.output_compaction:
+            if not HOOK_REPLACEMENT_VERIFIED:
+                raise RuntimeError(
+                    "hook output compaction is release-blocked: exclusive model-facing replacement "
+                    "was not demonstrated by the installed Codex runtime"
+                )
+            if not self.allow_hook_trust_bypass:
+                raise RuntimeError(
+                    "hook intervention requires explicit --allow-hook-trust-bypass "
+                    "during evaluation"
+                )
+            hook_state = worktree.parent / ".hook-evidence"
+            hook_metrics = worktree.parent / ".hook-metrics.jsonl"
+            hook_overrides = _hook_overrides()
         started = time.monotonic()
         run: CodexRun | None = None
         error = None
@@ -386,6 +412,14 @@ class CodexEvaluator:
                 self.auth_env_var,
             )
             agent_environment["LLMCUT_CONTEXT_STRATEGY"] = plan.selected_strategy.value
+            if hook_state is not None and hook_metrics is not None:
+                agent_environment.update(
+                    {
+                        "LLMCUT_HOOK_REPO": str(worktree),
+                        "LLMCUT_HOOK_STATE": str(hook_state),
+                        "LLMCUT_HOOK_METRICS": str(hook_metrics),
+                    }
+                )
             run = await self._backend.run(
                 task=prompt,
                 cwd=worktree,
@@ -396,7 +430,7 @@ class CodexEvaluator:
                 timeout=self.timeout,
                 max_turns=task.max_turns,
                 environment=agent_environment,
-                config_overrides=developer_overrides + mcp_overrides,
+                config_overrides=developer_overrides + mcp_overrides + hook_overrides,
                 validation_callback=validate,
                 cancellation=cancellation,
             )
@@ -428,6 +462,7 @@ class CodexEvaluator:
             ConservativeEstimator().count(task.prompt, model=self.suite.execution.model).value
         )
         mcp_payload = sum(int(item["data"].get("result_bytes", 0)) // 3 for item in mcp_events)
+        hook_observation = _hook_metrics(hook_metrics)
         return AgentRunResult(
             task.id,
             repetition,
@@ -483,6 +518,7 @@ class CodexEvaluator:
             sum(int(item["data"].get("result_bytes", 0)) // 3 for item in mcp_events),
             asdict(plan.adaptive_decision),
             _discovery_metrics(events),
+            hook_observation,
         )
 
     def _authentication_status(self) -> AuthenticationStatus:
@@ -1062,6 +1098,60 @@ def _usage_median(values: list[dict[str, Any]], keys: tuple[str, ...]) -> float 
         if found is not None:
             result.append(float(found))
     return median(result) if result else None
+
+
+def _hook_overrides() -> tuple[str, ...]:
+    from llmcut.integrations.codex.hooks.config import hook_command
+
+    command = json.dumps(hook_command())
+    value = (
+        'hooks.PostToolUse=[{matcher="^Bash$",hooks=[{type="command",'
+        f"command={command},timeout=15,additionalContextLimit=9000}}]}}]"
+    )
+    return ("features.hooks=true", value)
+
+
+def _hook_metrics(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.is_file() or path.is_symlink():
+        return {
+            "observation": "unavailable" if path is not None else "observed",
+            "hook_events": 0,
+            "eligible_events": 0,
+            "compacted_events": 0,
+            "pass_through_events": 0,
+            "original_result_bytes": 0,
+            "model_facing_result_bytes": 0,
+            "recovery_calls": 0,
+            "recovery_bytes": 0,
+        }
+    events: list[dict[str, Any]] = []
+    for line in path.read_text().splitlines()[:10_000]:
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            events.append(value)
+    compacted = [item for item in events if item.get("applied") is True]
+    recoveries = [item for item in events if item.get("classification") == "recovery"]
+    return {
+        "observation": "observed",
+        "hook_events": len(events),
+        "eligible_events": sum(item.get("event_supported") is True for item in events),
+        "compacted_events": len(compacted),
+        "pass_through_events": len(events) - len(compacted),
+        "original_result_bytes": sum(int(item.get("original_bytes", 0)) for item in events),
+        "model_facing_result_bytes": sum(int(item.get("compact_bytes", 0)) for item in events),
+        "estimated_original_tokens": sum(
+            int(item.get("original_tokens_estimate", 0)) for item in events
+        ),
+        "estimated_compact_tokens": sum(
+            int(item.get("compact_tokens_estimate", 0)) for item in events
+        ),
+        "recovery_calls": len(recoveries),
+        "recovery_bytes": sum(int(item.get("original_bytes", 0)) for item in recoveries),
+        "parsers": sorted({str(item.get("parser")) for item in compacted if item.get("parser")}),
+    }
 
 
 def _usage_reduction(baseline: AgentRunResult, optimized: AgentRunResult) -> float | None:

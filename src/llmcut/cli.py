@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
@@ -38,6 +39,8 @@ mcp_app = typer.Typer(help="Serve and inspect the llmcut MCP integration.")
 context_app = typer.Typer(help="Plan trusted repository orientation for coding agents.")
 agent_app = typer.Typer(help="Evaluate supported coding-agent integrations.")
 codex_app = typer.Typer(help="Inspect and configure the experimental Codex integration.")
+codex_hooks_app = typer.Typer(help="Inspect and configure Codex lifecycle hooks.")
+hook_app = typer.Typer(help="Handle hooks and recover exact compacted tool output.")
 app.add_typer(checkpoint_app, name="checkpoint")
 app.add_typer(evidence_app, name="evidence")
 app.add_typer(capture_app, name="capture")
@@ -45,12 +48,26 @@ app.add_typer(tokens_app, name="tokens")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(context_app, name="context")
 app.add_typer(agent_app, name="agent")
+app.add_typer(hook_app, name="hook")
 agent_app.add_typer(codex_app, name="codex")
+codex_app.add_typer(codex_hooks_app, name="hooks")
 
 
 def _store(repo: Path) -> EvidenceStore:
     config = load_config(repo)
     return EvidenceStore(config.state_dir, persist_content=config.persist_prompt_content)
+
+
+def _hook_state_root() -> Path:
+    configured = os.environ.get("LLMCUT_HOOK_STATE")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    base = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+    return (base / "llmcut" / "hooks").resolve()
+
+
+def _hook_config_path() -> Path:
+    return Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "hooks.json"
 
 
 @app.callback()
@@ -707,6 +724,174 @@ def codex_init(
     )
 
 
+@codex_hooks_app.command("doctor")
+def codex_hooks_doctor() -> None:
+    """Report runtime hook support without reading credentials."""
+    import shutil
+    import subprocess
+
+    from llmcut.integrations.codex.hooks.config import definition_digest
+
+    executable = shutil.which("codex")
+    version = None
+    bypass = False
+    if executable:
+        result = subprocess.run(
+            [executable, "--version"], text=True, capture_output=True, timeout=5, check=False
+        )
+        version = result.stdout.strip() if result.returncode == 0 else None
+        help_result = subprocess.run(
+            [executable, "--help"], text=True, capture_output=True, timeout=5, check=False
+        )
+        bypass = "--dangerously-bypass-hook-trust" in help_result.stdout
+    target = _hook_config_path()
+    typer.echo(
+        json.dumps(
+            {
+                "supported": bool(executable and bypass),
+                "runtime_version": version,
+                "hooks_feature": "enabled_by_default; configuration may override",
+                "supported_events": ["SessionStart", "PostToolUse"],
+                "configured_source": str(target),
+                "configured": target.is_file(),
+                "hook_definition_digest": definition_digest(),
+                "trust_state": "observable through Codex /hooks only",
+                "exclusive_model_replacement_verified": False,
+                "evaluation_ready": False,
+                "evaluation_blocker": (
+                    "installed runtime probe exposed original result and hook feedback"
+                ),
+                "one_off_trust_bypass": bypass,
+            },
+            indent=2,
+        )
+    )
+
+
+@codex_hooks_app.command("config")
+def codex_hooks_config() -> None:
+    from llmcut.integrations.codex.hooks.config import definition_digest, proposed_document
+
+    document = proposed_document()
+    typer.echo(
+        json.dumps(
+            {
+                "target": str(_hook_config_path()),
+                "definition_digest": definition_digest(document),
+                "configuration": document,
+                "mutates_files": False,
+            },
+            indent=2,
+        )
+    )
+
+
+@codex_hooks_app.command("install")
+def codex_hooks_install(
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+) -> None:
+    from llmcut.integrations.codex.hooks.config import install_hooks
+
+    result = install_hooks(config_path or _hook_config_path(), dry_run=dry_run)
+    result["persistent_trust_installed"] = False
+    result["review"] = "Review and trust the exact definition using Codex /hooks."
+    typer.echo(json.dumps(result, indent=2))
+
+
+@codex_hooks_app.command("remove")
+def codex_hooks_remove(
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+) -> None:
+    from llmcut.integrations.codex.hooks.config import remove_hooks
+
+    typer.echo(
+        json.dumps(remove_hooks(config_path or _hook_config_path(), dry_run=dry_run), indent=2)
+    )
+
+
+@hook_app.command("handle")
+def hook_handle() -> None:
+    """Handle one bounded Codex hook event from stdin; malformed input passes through."""
+    from llmcut.integrations.codex.hooks.config import MAX_HOOK_INPUT, HookConfig
+    from llmcut.integrations.codex.hooks.handler import append_metrics, handle_hook
+
+    raw = sys.stdin.buffer.read(MAX_HOOK_INPUT + 1)
+    repository = Path(os.environ.get("LLMCUT_HOOK_REPO", os.getcwd())).resolve()
+    response, metrics = handle_hook(raw, HookConfig(repository, _hook_state_root()))
+    metrics_path = os.environ.get("LLMCUT_HOOK_METRICS")
+    if metrics_path:
+        with contextlib.suppress(OSError):
+            append_metrics(Path(metrics_path), metrics)
+    if response is not None:
+        typer.echo(json.dumps(response, separators=(",", ":")))
+
+
+def _hook_store() -> Any:
+    from llmcut.integrations.codex.hooks.state import HookEvidenceStore
+
+    return HookEvidenceStore(_hook_state_root())
+
+
+@hook_app.command("show")
+def hook_show(evidence_id: str) -> None:
+    from llmcut.integrations.codex.hooks.state import render_exact
+
+    typer.echo(render_exact(_hook_store().get(evidence_id)), nl=False)
+
+
+@hook_app.command("info")
+def hook_info(evidence_id: str) -> None:
+    typer.echo(json.dumps(_hook_store().info(evidence_id), indent=2, sort_keys=True))
+
+
+@hook_app.command("range")
+def hook_range(
+    evidence_id: str,
+    start: Annotated[int, typer.Option("--start")],
+    end: Annotated[int, typer.Option("--end")],
+) -> None:
+    from llmcut.integrations.codex.hooks.state import exact_lines
+
+    if start < 1 or end < start or end - start > 2_000:
+        raise typer.BadParameter("range must be ordered, one-based, and at most 2001 lines")
+    typer.echo("".join(exact_lines(_hook_store().get(evidence_id))[start - 1 : end]), nl=False)
+
+
+@hook_app.command("search")
+def hook_search(
+    evidence_id: str,
+    pattern: Annotated[str, typer.Option("--pattern")],
+) -> None:
+    from llmcut.integrations.codex.hooks.state import exact_lines
+
+    if not pattern or len(pattern) > 512:
+        raise typer.BadParameter("literal pattern must contain 1 to 512 characters")
+    matches = [line for line in exact_lines(_hook_store().get(evidence_id)) if pattern in line]
+    typer.echo("".join(matches[:2_000]), nl=False)
+
+
+@hook_app.command("gc")
+def hook_gc(
+    maximum_age: Annotated[int, typer.Option("--maximum-age")] = 604_800,
+    maximum_bytes: Annotated[int, typer.Option("--maximum-bytes")] = 268_435_456,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+) -> None:
+    if maximum_age < 0 or maximum_bytes < 0:
+        raise typer.BadParameter("GC bounds must be nonnegative")
+    typer.echo(
+        json.dumps(
+            _hook_store().collect(
+                maximum_age_seconds=maximum_age,
+                maximum_total_bytes=maximum_bytes,
+                dry_run=dry_run,
+            ),
+            indent=2,
+        )
+    )
+
+
 @codex_app.command("run")
 def codex_run(
     task: Annotated[str, typer.Option("--task")],
@@ -776,6 +961,7 @@ def agent_evaluate(
     auth_env_var: Annotated[str | None, typer.Option("--auth-env-var")] = None,
     context_strategy: Annotated[str | None, typer.Option("--context-strategy")] = None,
     pilot: Annotated[bool, typer.Option("--pilot")] = False,
+    allow_hook_trust_bypass: Annotated[bool, typer.Option("--allow-hook-trust-bypass")] = False,
 ) -> None:
     import asyncio
     import tempfile
@@ -801,6 +987,7 @@ def agent_evaluate(
         auth_env_var=auth_env_var,
         context_strategy=context_strategy,
         pilot=pilot,
+        allow_hook_trust_bypass=allow_hook_trust_bypass,
     )
     try:
         evaluation = evaluator.plan() if dry_run else asyncio.run(evaluator.run())

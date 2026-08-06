@@ -67,7 +67,10 @@ def test_guided_plan_is_deterministic_bounded_and_metadata_only(tmp_path: Path) 
     adaptive_orientation = plan_codex_context(repo, "Fix singular widget", "adaptive")
     assert adaptive_orientation.selected_strategy is ContextStrategy.ORIENTATION
     adaptive_guided = plan_codex_context(repo, "Diagnose an unexplained regression", "adaptive")
-    assert adaptive_guided.selected_strategy is ContextStrategy.GUIDED
+    assert adaptive_guided.selected_strategy is ContextStrategy.ORIENTATION
+    assert ContextStrategy.COMPACT_OUTPUT.intervention.output_compaction
+    assert ContextStrategy.HYBRID.intervention.orientation
+    assert not ContextStrategy.GUIDED_MCP.intervention.output_compaction
 
 
 @pytest.mark.asyncio
