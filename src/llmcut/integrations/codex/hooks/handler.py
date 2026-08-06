@@ -29,6 +29,12 @@ def handle_hook(
         metrics["event_supported"] = True
         classified = classify_command(event.command)
         metrics["classification"] = classified.classification.value
+        metrics["command_digest"] = digest_bytes(event.command.encode())
+        metrics["session_digest"] = digest_bytes(event.session_id.encode())
+        metrics["turn_digest"] = digest_bytes(event.turn_id.encode())
+        definition_digest = os.environ.get("LLMCUT_HOOK_DEFINITION_DIGEST")
+        if definition_digest:
+            metrics["hook_definition_digest"] = definition_digest[:128]
         if (
             classified.classification is CommandClass.RECOVERY
             or os.environ.get("LLMCUT_HOOK_RECOVERY") == "1"

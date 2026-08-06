@@ -216,12 +216,13 @@ def write_agent_capture(evaluation: dict[str, Any], destination: Path) -> Path:
                     "usage": {"input_tokens": 0, "quality": "unavailable"},
                 }
             )
+        backend = str(redacted.get("backend", "sdk"))
         manifest = {
             "schema_version": CAPTURE_SCHEMA_VERSION,
             "capture_id": str(redacted.get("run_id", "")),
-            "provider": "codex-app-server",
+            "provider": f"codex-{backend}",
             "model": str(redacted.get("environment", {}).get("model", "unknown")),
-            "endpoint": "app-server-stdio",
+            "endpoint": "exec-jsonl" if backend == "exec" else "app-server-stdio",
             "capture_provenance": (
                 "untrusted_fixture"
                 if redacted.get("codex_version") == "configured-test-transport"

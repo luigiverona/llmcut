@@ -1,0 +1,37 @@
+schema_version = "1"
+agent = "codex"
+repetitions = 1
+order = "baseline-first"
+seed = 606
+timeout_seconds = 30
+codex_executable = "fake_codex_exec.py"
+
+[execution]
+backend = "exec"
+model = "fake-codex-model"
+reasoning_effort = "low"
+sandbox = "workspace-write"
+approval_policy = "never"
+environment_allowlist = ["LLMCUT_FAKE_SCENARIO"]
+context_strategy = "post-replace"
+require_hook_activation = true
+require_resolved_model_observation = false
+ignore_user_config = true
+ignore_rules = true
+ephemeral = true
+
+[[tasks]]
+id = "exec-python-callback-timeout"
+repository = "repositories/python-timeout"
+starting_ref = "HEAD"
+prompt = "Fix the callback timeout behavior and run the validation."
+validation = [["python", "tests/validate_callback.py"]]
+allowed_changes = ["app/callback.py"]
+required_files = ["app/callback.py", "tests/validate_callback.py"]
+max_turns = 1
+
+[tasks.baseline]
+context_strategy = "off"
+
+[tasks.optimized]
+context_strategy = "post-replace"

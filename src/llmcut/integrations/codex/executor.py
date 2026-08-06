@@ -24,6 +24,7 @@ from llmcut.integrations.codex.backend import (
     CodexBackend,
     codex_agent_environment,
     create_backend,
+    validate_backend_requirements,
     validation_environment,
 )
 from llmcut.integrations.codex.context import (
@@ -106,6 +107,8 @@ class AgentRunResult:
     context_decision: dict[str, Any] = field(default_factory=dict)
     discovery_observation: dict[str, Any] = field(default_factory=dict)
     hook_observation: dict[str, Any] = field(default_factory=dict)
+    requested_settings: dict[str, Any] = field(default_factory=dict)
+    resolved_model_observation: str = "unavailable"
 
     @property
     def quality_passed(self) -> bool:
@@ -117,6 +120,7 @@ class AgentRunResult:
             and not self.missing_required_files
             and not self.timed_out
             and not self.cancelled
+            and self.hook_observation.get("validity") != "invalid"
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -254,6 +258,29 @@ class CodexEvaluator:
             raise RuntimeError(
                 backend_capabilities.detail or "selected Codex backend is unavailable"
             )
+        if self.suite.executable == "codex":
+            validate_backend_requirements(self.context_strategy.value, backend_capabilities)
+        if self.suite.execution.require_resolved_model_observation and not (
+            backend_capabilities.resolved_model_observation
+        ):
+            raise RuntimeError(
+                "release suite requires resolved-model observation, but the selected backend "
+                "does not expose it"
+            )
+        if (
+            self.suite.execution.require_hook_activation
+            and self.context_strategy.intervention.output_compaction
+            and not self.allow_hook_trust_bypass
+        ):
+            raise RuntimeError(
+                "automated hook evaluation requires explicit --allow-hook-trust-bypass"
+            )
+        if self.backend_name == "exec" and (
+            not self.suite.execution.ignore_user_config or not self.suite.execution.ignore_rules
+        ):
+            raise RuntimeError(
+                "exec evaluation requires ignore_user_config=true and ignore_rules=true"
+            )
         authentication = self._authentication_status()
         if self.suite.executable == "codex" and not authentication.automation_ready:
             raise RuntimeError(authentication.diagnostic or "Codex authentication is unavailable")
@@ -343,7 +370,11 @@ class CodexEvaluator:
         settings_digest = digest_bytes(
             json.dumps(settings, sort_keys=True, separators=(",", ":")).encode()
         )
-        parity = {key: value for key, value in settings.items() if key != "context_strategy"}
+        parity = {
+            key: value
+            for key, value in settings.items()
+            if key not in {"context_strategy", "hook_trust_bypass"}
+        }
         parity_digest = digest_bytes(
             json.dumps(parity, sort_keys=True, separators=(",", ":")).encode()
         )
@@ -414,11 +445,14 @@ class CodexEvaluator:
             )
             agent_environment["LLMCUT_CONTEXT_STRATEGY"] = plan.selected_strategy.value
             if hook_state is not None and hook_metrics is not None:
+                from llmcut.integrations.codex.hooks.config import definition_digest
+
                 agent_environment.update(
                     {
                         "LLMCUT_HOOK_REPO": str(worktree),
                         "LLMCUT_HOOK_STATE": str(hook_state),
                         "LLMCUT_HOOK_METRICS": str(hook_metrics),
+                        "LLMCUT_HOOK_DEFINITION_DIGEST": definition_digest(),
                     }
                 )
             run = await self._backend.run(
@@ -468,6 +502,31 @@ class CodexEvaluator:
         )
         mcp_payload = sum(int(item["data"].get("result_bytes", 0)) // 3 for item in mcp_events)
         hook_observation = _hook_metrics(hook_metrics)
+        hook_observation.update(_reconcile_hooks(events, hook_observation))
+        if plan.selected_strategy.intervention.output_compaction:
+            from llmcut.integrations.codex.hooks.config import definition_digest
+
+            definition_valid = hook_observation.get("hook_definition_digests") == [
+                definition_digest()
+            ]
+            commands_observed = int(hook_observation.get("codex_completed_commands", 0))
+            hooks_observed = int(hook_observation.get("hook_events", 0))
+            hook_observation["activation"] = (
+                "observed"
+                if hooks_observed
+                else "configured_no_command"
+                if not commands_observed
+                else "missing"
+            )
+            hook_observation["validity"] = (
+                "valid"
+                if (hooks_observed and definition_valid)
+                or (not commands_observed and not hooks_observed)
+                else "invalid"
+            )
+        else:
+            hook_observation["activation"] = "disabled"
+            hook_observation["validity"] = "valid"
         _cleanup_hook_artifacts(hook_state, hook_metrics, worktree.parent)
         return AgentRunResult(
             task.id,
@@ -525,6 +584,8 @@ class CodexEvaluator:
             asdict(plan.adaptive_decision),
             _discovery_metrics(events),
             hook_observation,
+            settings | (run.backend_metadata if run else {}),
+            "unavailable",
         )
 
     def _authentication_status(self) -> AuthenticationStatus:
@@ -575,6 +636,7 @@ class CodexEvaluator:
 
     def _settings(self, task: AgentTask, mode: str) -> dict[str, Any]:
         overrides = task.baseline if mode == "baseline" else task.optimized
+        executable = Path(self.suite.executable).resolve()
         return {
             "task_digest": digest_bytes(task.prompt.encode()),
             "model": overrides.get("model", self.suite.execution.model),
@@ -590,6 +652,18 @@ class CodexEvaluator:
             "max_turns": task.max_turns,
             "validation": task.validation,
             "context_strategy": self._context_strategy(task, mode).value,
+            "backend": self.backend_name,
+            "codex_executable": str(executable),
+            "codex_executable_digest": (
+                digest_bytes(executable.read_bytes()) if executable.is_file() else "unavailable"
+            ),
+            "hook_trust_bypass": bool(
+                self.allow_hook_trust_bypass
+                and self._context_strategy(task, mode).intervention.output_compaction
+            ),
+            "ignore_user_config": self.suite.execution.ignore_user_config,
+            "ignore_rules": self.suite.execution.ignore_rules,
+            "ephemeral": self.suite.execution.ephemeral,
         }
 
     def _order(self) -> list[dict[str, Any]]:
@@ -1112,7 +1186,9 @@ def _usage_median(values: list[dict[str, Any]], keys: tuple[str, ...]) -> float 
 
 
 def _hook_overrides() -> tuple[str, ...]:
-    return ("features.hooks=true",)
+    from llmcut.integrations.codex.hooks.config import inline_overrides
+
+    return inline_overrides()
 
 
 def _hook_replacement_verified(executable: str, backend: str) -> bool:
@@ -1197,6 +1273,58 @@ def _hook_metrics(path: Path | None) -> dict[str, Any]:
         "recovery_calls": len(recoveries),
         "recovery_bytes": sum(int(item.get("original_bytes", 0)) for item in recoveries),
         "parsers": sorted({str(item.get("parser")) for item in compacted if item.get("parser")}),
+        "command_digests": [
+            str(item["command_digest"])
+            for item in events
+            if isinstance(item.get("command_digest"), str)
+        ],
+        "hook_definition_digests": sorted(
+            {
+                str(item["hook_definition_digest"])
+                for item in events
+                if isinstance(item.get("hook_definition_digest"), str)
+            }
+        ),
+    }
+
+
+def _reconcile_hooks(events: list[dict[str, Any]], observation: dict[str, Any]) -> dict[str, Any]:
+    commands: list[str] = []
+    for event in events:
+        if event.get("kind") != "command_execution" or event.get("method") not in {
+            "item.completed",
+            "item/completed",
+        }:
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        digest = data.get("command_digest")
+        if not isinstance(digest, str) and isinstance(data.get("command"), str):
+            digest = digest_bytes(str(data["command"]).encode())
+        if isinstance(digest, str):
+            commands.append(digest)
+    hook_values = observation.get("command_digests", [])
+    hooks = [str(value) for value in hook_values] if isinstance(hook_values, list) else []
+    unmatched_commands = list(commands)
+    unmatched_hooks: list[str] = []
+    matched = 0
+    for value in hooks:
+        if value in unmatched_commands:
+            unmatched_commands.remove(value)
+            matched += 1
+        else:
+            unmatched_hooks.append(value)
+    return {
+        "codex_completed_commands": len(commands),
+        "matched_hook_events": matched,
+        "unmatched_codex_events": len(unmatched_commands),
+        "unmatched_hook_events": len(unmatched_hooks),
+        "reconciliation": (
+            "observed"
+            if observation.get("observation") == "observed" and not unmatched_hooks
+            else "partially_observed"
+        ),
     }
 
 
