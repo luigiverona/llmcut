@@ -16,6 +16,11 @@
   versions 0.146.0 and 0.144.4. No hook token savings are claimed before pilots.
 - The bounded SDK pilot preserved quality but observed zero hook activation through App Server, so
   it stopped before hybrid; apparent token differences are not attributed to llmcut.
+- Added a first-class `codex exec --json` evaluation backend with explicit settings, stdin prompt
+  transport, bounded JSONL usage/event parsing, process-group cleanup, continuation support, and
+  command/hook digest reconciliation. Hook-required live SDK/App Server runs now fail before quota.
+- The first authenticated exec probe emitted terminal usage and command events but zero hook events
+  in three bounded attempts; the pilot and release suite were withheld and v0.6.0 remains blocked.
 
 ## 0.5.0 - 2026-08-03
 

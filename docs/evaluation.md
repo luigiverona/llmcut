@@ -62,3 +62,15 @@ shape was repeated twice before adoption.
 The later SDK pilot stopped at the activation gate: 8/8 outcomes passed, but the App Server-backed
 SDK runs recorded no hook events. Its apparent +7.15% representative median is explicitly not a
 compaction result and is excluded from release statistics. No hybrid or full-suite run followed.
+
+Hook evaluation now uses `codex exec --json`. A valid run requires a zero process status, exactly one
+completed terminal event, valid `turn.completed.usage`, no fatal top-level error, and reconciled hook
+metrics. Unknown additive events retain bounded key metadata only; reasoning, agent messages,
+command output, prompts, and environment values are not persisted.
+
+The installed JSONL contract does not expose a resolved model. A suite requiring resolved-model
+observation is rejected before quota use until a safe, version-bound observation path is available.
+
+The initial authenticated exec-backend probe observed terminal usage and command events but zero
+hook events across three bounded attempts. It failed the activation gate, so no output-compaction
+pilot or release suite followed and no reduction is claimed.

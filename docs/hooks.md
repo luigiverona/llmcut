@@ -69,3 +69,20 @@ pilot observed zero hook events through the SDK-pinned App Server launch. All ei
 passed quality, yet no apparent token difference is attributed to llmcut without activation. The
 pilot stopped before hybrid and is retained as negative metadata in
 `docs/evidence/v06-posttool-sdk-pilot.json`.
+
+## Exec evaluation surface
+
+Direct `codex exec` conformance proved exclusive PostToolUse replacement. SDK/App Server evaluation
+did not activate hooks and remains ineligible for hook-savings measurements. Hook-capable evaluation
+therefore uses `--backend exec`, a protected disposable hook definition, the runtime-proven
+`decision:"block"` response, and the explicit one-off trust bypass.
+
+Baseline exec runs disable hooks and MCP. Optimized runs reconcile completed Codex command digests
+with metadata-only hook-event digests. Missing, duplicate, or mismatched activation invalidates a
+comparison. Agent-input reductions are credited to hook compaction only when activation is observed
+and execution, settings, repository, validation, and quality parity all pass.
+
+The first isolated exec-backend probe on `codex-cli 0.146.0` completed with JSONL usage and command
+events but recorded zero hook events across three bounded configuration attempts. The output pilot
+was therefore not run. This is an activation/configuration blocker, not evidence against the earlier
+exclusive-replacement conformance result and not a token-savings result.

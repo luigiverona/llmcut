@@ -24,7 +24,9 @@ not invoked by Codex. `v0.6.0` uses task-aware orientation, compact retrieval, a
 It is released only if authenticated agent-reported usage demonstrates improvement without quality
 regression.
 
-The default live backend is the official `openai-codex` Python SDK with its pinned Codex runtime.
+The default general live backend is the official `openai-codex` Python SDK with its pinned Codex
+runtime. Hook measurement uses `--backend exec`, because direct exec activates the proven hook path
+while the SDK/App Server surface did not.
 MCP configuration supplies llmcut retrieval tools. The direct `codex app-server` JSON-RPC client is
 an explicitly selected compatibility backend; the fake runtime exercises the same evaluator in CI.
 Core models do not import the SDK, and no Codex internals, credential contents, or private APIs are
@@ -58,6 +60,12 @@ unverified and unavailable because the canonical post-execution mechanism passed
 ## Executable A/B evaluation
 
 `llmcut agent eval --agent codex --backend sdk --suite suite.toml` performs real, non-dry-run SDK execution.
+
+`llmcut agent eval --agent codex --backend exec --suite suite.toml` launches an argv-only
+`codex exec --json` process. The task uses stdin, settings are explicit, baseline hooks/MCP are
+disabled, terminal usage is authoritative, and hook events reconcile with command events. Inspect
+capabilities with `llmcut agent codex doctor --backend exec`; run the minimal disposable contract
+probe with `llmcut agent codex exec probe --allow-hook-trust-bypass`.
 For every task and repetition it materializes separate baseline and optimized Git worktrees at the
 same commit, verifies tracked-file and execution-setting parity, starts a fresh App Server process,
 and runs validation directly as argv arrays. Under the default `standard-baseline` design both modes

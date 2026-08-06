@@ -4,9 +4,10 @@
 coding agents, and API clients. It keeps the smallest confidently sufficient working set in model
 context, stores original evidence locally, and expands context when exclusion could affect quality.
 
-The unreleased v0.6 work adds adaptive Codex context routing through the official Python Codex SDK
-while
-remaining conservative: **extreme is the default but is not lossy**. The
+The unreleased v0.6 work adds adaptive Codex context routing and a structured `codex exec --json`
+evaluation backend. The SDK remains the general automation default; hook-savings evaluation uses
+direct exec because the SDK/App Server surface did not activate lifecycle hooks. It remains
+conservative: **extreme is the default but is not lossy**. The
 optimizer does not change models, reasoning settings, tools, validation requirements, or source
 code. Low-confidence material stays in context; recoverable omission requires explicit,
 high-confidence evidence. The policy is enforced during optimization, but outcome parity is not

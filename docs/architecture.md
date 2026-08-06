@@ -16,9 +16,10 @@ The MCP server is an integration adapter over repository indexing and exact retr
 its own filesystem policy and never enters the provider-neutral canonical model. Codex support is
 isolated under `integrations/codex`; core optimization and MCP remain usable without Codex.
 
-The Codex integration depends on a small backend protocol. The official SDK backend is the live
-default, the direct App Server client is a compatibility backend, and the fake SDK transport drives
-CI. Authentication discovery and child environments remain inside this boundary. Standard live
+The Codex integration depends on a small backend protocol. The official SDK backend is the general
+live default, the direct App Server client is a compatibility backend, `exec` is the hook-capable
+evaluation backend, and fake SDK/exec transports drive CI. Authentication discovery and child
+environments remain inside this boundary. Standard live
 evaluation sends the same task text to both modes and identifies llmcut MCP as the context-delivery
 intervention.
 
@@ -100,3 +101,7 @@ Codex interventions are decomposed into orientation, output compaction, recovery
 surface. `compact-output` and `hybrid` use a Codex-specific hook adapter; hook policy is not placed
 in the provider-neutral managed runtime. Exact hook evidence has a separate lifecycle from managed
 evidence. See [hooks.md](hooks.md).
+
+The exec adapter launches `codex exec --json` without a shell, transports the task over stdin, and
+normalizes bounded JSONL into the shared event domain. It stores command digests and classifications,
+status and byte counts, and repository-relative file paths—not reasoning or message contents.

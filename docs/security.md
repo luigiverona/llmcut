@@ -59,6 +59,11 @@ are stopped. Cancellation and provider failures close the bounded loop without e
 capabilities.
 ## Codex hooks
 
+The exec evaluator launches through an argv array and sends task text only on stdin. It bounds JSONL
+lines, stderr, and event counts and terminates the process group on timeout or cancellation. User
+config, rules, MCP, and baseline hooks are disabled. The credential store is never scanned or copied;
+validation and hook metrics receive no credential contents.
+
 Codex hook output is untrusted data. Exact hook evidence is kept outside repositories and captures,
 under restrictive permissions, without environment or authentication values. Hook failures pass
 through the original tool result. Persistent installation never grants trust; automated trust

@@ -1,0 +1,40 @@
+{
+  "schema_version": "1",
+  "kind": "metadata-only exec backend investigation",
+  "generated_at": "2026-08-06T00:00:00Z",
+  "base_revision": "0834af2a2a7a4a1999f8b284272a6e7fb69b9f22",
+  "runtime": {
+    "installed_codex": "codex-cli 0.146.0",
+    "sdk_pinned_codex": "codex-cli 0.144.4",
+    "post_tool_replacement": "supported by prior direct-exec conformance",
+    "sdk_app_server_hook_activation": "not observed",
+    "resolved_model_jsonl_observation": "unavailable"
+  },
+  "offline_result": {
+    "argv_only_launch": "passed",
+    "stdin_prompt_transport": "passed",
+    "jsonl_terminal_and_usage": "passed with fake exec runtime",
+    "real_hook_subprocess": "passed with fake exec runtime",
+    "command_hook_reconciliation": "passed with fake exec runtime",
+    "baseline_hook_isolation": "passed with fake exec runtime"
+  },
+  "authenticated_probe": {
+    "attempts": 3,
+    "runtime": "codex-cli 0.146.0",
+    "model_requested": "gpt-5.6-terra",
+    "terminal_state": "completed",
+    "jsonl_usage": "observed",
+    "command_events": "observed",
+    "hook_events": 0,
+    "compacted_events": 0,
+    "process_cleanup": "observed",
+    "resolved_model_observation": "unavailable",
+    "result": "failed hook activation gate"
+  },
+  "pilot": "not run because the authenticated hook-activation gate failed",
+  "release_statistics_eligible": false,
+  "contains_prompts": false,
+  "contains_command_output": false,
+  "contains_credentials": false,
+  "claim_state": "no token reduction claim; authenticated pilot and release suite withheld"
+}
