@@ -38,6 +38,7 @@ class CodexRun:
     stderr: str = ""
     request_digests: tuple[str, ...] = ()
     response_digests: tuple[str, ...] = ()
+    backend_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class CodexAppServer:

@@ -23,6 +23,67 @@ class BackendCapabilities:
     runtime_version: str | None
     usage_events: bool
     detail: str | None = None
+    hooks: bool = False
+    exclusive_post_tool_replacement: bool = False
+    jsonl_usage: bool = False
+    command_events: bool = False
+    file_change_events: bool = False
+    resumable_turns: bool = False
+    developer_instructions: bool = True
+    mcp: bool = True
+    resolved_model_observation: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class BackendRequirements:
+    hooks: bool = False
+    exclusive_post_tool_replacement: bool = False
+    jsonl_usage: bool = False
+    command_events: bool = False
+    file_change_events: bool = False
+    resumable_turns: bool = False
+    developer_instructions: bool = False
+    mcp: bool = False
+
+
+def requirements_for_strategy(strategy: str) -> BackendRequirements:
+    if strategy in {"compact-output", "post-replace", "hybrid", "adaptive"}:
+        return BackendRequirements(
+            hooks=True,
+            exclusive_post_tool_replacement=True,
+            jsonl_usage=True,
+            command_events=True,
+        )
+    if strategy == "orientation":
+        return BackendRequirements(developer_instructions=True)
+    if strategy in {"guided", "guided-mcp", "legacy-passive"}:
+        return BackendRequirements(mcp=True, developer_instructions=strategy != "legacy-passive")
+    return BackendRequirements()
+
+
+def validate_backend_requirements(strategy: str, capabilities: BackendCapabilities) -> None:
+    requirements = requirements_for_strategy(strategy)
+    missing = [
+        name
+        for name in (
+            "hooks",
+            "exclusive_post_tool_replacement",
+            "jsonl_usage",
+            "command_events",
+            "file_change_events",
+            "resumable_turns",
+            "developer_instructions",
+            "mcp",
+        )
+        if getattr(requirements, name) and not getattr(capabilities, name)
+    ]
+    if missing:
+        detail = ", ".join(missing)
+        suggestion = " Use --backend exec." if requirements.hooks else ""
+        raise RuntimeError(
+            f"Intervention {strategy} requires backend capabilities: {detail}. "
+            f"Backend {capabilities.name} does not provide them.{suggestion}"
+        )
 
 
 class CodexBackend(Protocol):
@@ -270,6 +331,23 @@ class SDKBackend:
 class FakeBackend(SDKBackend):
     """SDK-backed test transport using an explicit local fake Codex runtime."""
 
+    async def doctor(self) -> BackendCapabilities:
+        base = await super().doctor()
+        return BackendCapabilities(
+            "fake",
+            base.installed,
+            base.version,
+            base.runtime_version,
+            base.usage_events,
+            base.detail,
+            hooks=True,
+            exclusive_post_tool_replacement=True,
+            jsonl_usage=True,
+            command_events=True,
+            file_change_events=True,
+            resumable_turns=True,
+        )
+
 
 def create_backend(
     name: str, executable: str = "codex", *, allow_hook_trust_bypass: bool = False
@@ -281,6 +359,10 @@ def create_backend(
         )
     if name == "app-server":
         return AppServerBackend(executable)
+    if name == "exec":
+        from llmcut.integrations.codex.exec_backend import ExecBackend
+
+        return ExecBackend(executable, allow_hook_trust_bypass=allow_hook_trust_bypass)
     if name == "fake":
         if executable == "codex":
             raise ValueError("fake backend requires a configured test executable")

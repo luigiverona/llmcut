@@ -13,7 +13,7 @@ SCHEMA_VERSION = "1"
 ORDERS = {"baseline-first", "optimized-first", "alternating", "random"}
 SANDBOXES = {"read-only", "workspace-write", "danger-full-access"}
 APPROVALS = {"never", "on-request", "untrusted"}
-BACKENDS = {"sdk", "app-server", "fake"}
+BACKENDS = {"sdk", "app-server", "exec", "fake"}
 AUTH_MODES = {"existing-session", "api-key", "access-token", "none"}
 COMPARISON_DESIGNS = {"standard-baseline", "tool-parity-baseline", "synthetic-full-context"}
 REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
@@ -34,6 +34,11 @@ class ExecutionConfig:
     context_strategy: str = "adaptive"
     orientation_budget: int = 200
     retrieval_budget: int = 4_096
+    require_hook_activation: bool = False
+    require_resolved_model_observation: bool = False
+    ignore_user_config: bool = True
+    ignore_rules: bool = True
+    ephemeral: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,18 +95,29 @@ def load_suite(path: Path) -> AgentSuite:
         raise ValueError("timeout_seconds must be between 1 and 7200")
     execution_raw = _object(raw.get("execution"), "execution")
     execution = ExecutionConfig(
-        _required(execution_raw, "model"),
-        _required(execution_raw, "reasoning_effort"),
-        str(execution_raw.get("sandbox", "workspace-write")),
-        str(execution_raw.get("approval_policy", "never")),
-        tuple(_strings(execution_raw.get("environment_allowlist", []), "environment_allowlist")),
-        str(execution_raw.get("backend", "sdk")),
-        str(execution_raw.get("auth_mode", "existing-session")),
-        str(execution_raw["auth_env_var"]) if execution_raw.get("auth_env_var") else None,
-        str(execution_raw.get("comparison_design", "standard-baseline")),
-        str(execution_raw.get("context_strategy", "adaptive")),
-        int(execution_raw.get("orientation_budget", 200)),
-        int(execution_raw.get("retrieval_budget", 4_096)),
+        model=_required(execution_raw, "model"),
+        reasoning_effort=_required(execution_raw, "reasoning_effort"),
+        sandbox=str(execution_raw.get("sandbox", "workspace-write")),
+        approval_policy=str(execution_raw.get("approval_policy", "never")),
+        environment_allowlist=tuple(
+            _strings(execution_raw.get("environment_allowlist", []), "environment_allowlist")
+        ),
+        backend=str(execution_raw.get("backend", "sdk")),
+        auth_mode=str(execution_raw.get("auth_mode", "existing-session")),
+        auth_env_var=(
+            str(execution_raw["auth_env_var"]) if execution_raw.get("auth_env_var") else None
+        ),
+        comparison_design=str(execution_raw.get("comparison_design", "standard-baseline")),
+        context_strategy=str(execution_raw.get("context_strategy", "adaptive")),
+        orientation_budget=int(execution_raw.get("orientation_budget", 200)),
+        retrieval_budget=int(execution_raw.get("retrieval_budget", 4_096)),
+        require_hook_activation=bool(execution_raw.get("require_hook_activation", False)),
+        require_resolved_model_observation=bool(
+            execution_raw.get("require_resolved_model_observation", False)
+        ),
+        ignore_user_config=bool(execution_raw.get("ignore_user_config", True)),
+        ignore_rules=bool(execution_raw.get("ignore_rules", True)),
+        ephemeral=bool(execution_raw.get("ephemeral", True)),
     )
     if execution.sandbox not in SANDBOXES:
         raise ValueError(f"unsupported sandbox: {execution.sandbox}")
@@ -276,6 +292,13 @@ def _suite_dict(value: AgentSuite) -> dict[str, Any]:
             "context_strategy": value.execution.context_strategy,
             "orientation_budget": value.execution.orientation_budget,
             "retrieval_budget": value.execution.retrieval_budget,
+            "require_hook_activation": value.execution.require_hook_activation,
+            "require_resolved_model_observation": (
+                value.execution.require_resolved_model_observation
+            ),
+            "ignore_user_config": value.execution.ignore_user_config,
+            "ignore_rules": value.execution.ignore_rules,
+            "ephemeral": value.execution.ephemeral,
         },
         "tasks": [
             {

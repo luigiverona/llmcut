@@ -24,6 +24,7 @@ from llmcut.integrations.codex.hooks.compact import compact_bash_result
 from llmcut.integrations.codex.hooks.config import (
     HookConfig,
     hook_command,
+    inline_overrides,
     install_hooks,
     proposed_document,
     remove_hooks,
@@ -267,6 +268,10 @@ def test_configuration_merge_remove_and_permissions(tmp_path: Path) -> None:
     assert "Stop" in json.loads(target.read_text())["hooks"]
     assert "PostToolUse" not in json.loads(target.read_text())["hooks"]
     assert proposed_document()["hooks"]["PostToolUse"][0]["matcher"] == "^Bash$"
+    overrides = inline_overrides()
+    assert overrides[0] == "features.hooks=true"
+    assert "hooks.PostToolUse=" in overrides[1]
+    assert json.dumps(hook_command()) in overrides[1]
 
 
 def test_real_hook_subprocess_model_visible_replacement(tmp_path: Path) -> None:
@@ -470,12 +475,16 @@ def test_compactor_conservative_projection_fallbacks() -> None:
     assert too_small_to_benefit.reason == "projection is not beneficial"
 
 
-def test_handler_small_result_records_pass_through(tmp_path: Path) -> None:
+def test_handler_small_result_records_pass_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
+    monkeypatch.setenv("LLMCUT_HOOK_DEFINITION_DIGEST", "sha256:definition")
     response, metrics = handle_hook(_event(repo, "small", code=0), HookConfig(repo, tmp_path / "s"))
     assert response is None
     assert metrics["reason"] == "below threshold"
+    assert metrics["hook_definition_digest"] == "sha256:definition"
 
 
 def test_handler_cli_metrics_and_store_collection(
@@ -578,7 +587,8 @@ def test_evaluation_hook_configuration_metrics_and_cleanup(tmp_path: Path) -> No
     config = _write_evaluation_hook(worktree)
     assert stat.S_IMODE(config.stat().st_mode) == 0o600
     assert json.loads(config.read_text())["hooks"]["PostToolUse"][0]["matcher"] == "^Bash$"
-    assert _hook_overrides() == ("features.hooks=true",)
+    assert _hook_overrides()[0] == "features.hooks=true"
+    assert "hooks.PostToolUse=" in _hook_overrides()[1]
     assert _hook_replacement_verified("fake_codex.py", "fake")
     assert not _hook_replacement_verified("codex", "sdk")
     with pytest.raises(RuntimeError, match="without an existing"):

@@ -74,6 +74,17 @@ def definition_digest(document: dict[str, Any] | None = None) -> str:
     return digest_bytes(payload.encode())
 
 
+def inline_overrides() -> tuple[str, ...]:
+    """Render the same hook through the trusted command-line config layer."""
+    command = json.dumps(hook_command())
+    value = (
+        'hooks.PostToolUse=[{matcher="^Bash$",hooks=[{type="command",command='
+        f'{command},timeout=15,statusMessage="Compacting recoverable Bash output",'
+        "additionalContextLimit=9000}]}]"
+    )
+    return ("features.hooks=true", value)
+
+
 def install_hooks(target: Path, *, dry_run: bool = False) -> dict[str, Any]:
     target = target.expanduser().resolve()
     proposed = proposed_document()

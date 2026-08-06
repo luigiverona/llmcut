@@ -40,6 +40,7 @@ context_app = typer.Typer(help="Plan trusted repository orientation for coding a
 agent_app = typer.Typer(help="Evaluate supported coding-agent integrations.")
 codex_app = typer.Typer(help="Inspect and configure the experimental Codex integration.")
 codex_hooks_app = typer.Typer(help="Inspect and configure Codex lifecycle hooks.")
+codex_exec_app = typer.Typer(help="Probe the structured codex exec evaluation surface.")
 hook_app = typer.Typer(help="Handle hooks and recover exact compacted tool output.")
 app.add_typer(checkpoint_app, name="checkpoint")
 app.add_typer(evidence_app, name="evidence")
@@ -51,6 +52,7 @@ app.add_typer(agent_app, name="agent")
 app.add_typer(hook_app, name="hook")
 agent_app.add_typer(codex_app, name="codex")
 codex_app.add_typer(codex_hooks_app, name="hooks")
+codex_app.add_typer(codex_exec_app, name="exec")
 
 
 def _store(repo: Path) -> EvidenceStore:
@@ -673,11 +675,151 @@ def mcp_config(repo: Annotated[Path, typer.Option("--repo")] = Path(".")) -> Non
 def codex_doctor(
     backend: Annotated[str, typer.Option("--backend")] = "sdk",
 ) -> None:
+    import asyncio
+
     from llmcut.integrations.codex import detect_codex
+    from llmcut.integrations.codex.auth import authentication_preflight
+    from llmcut.integrations.codex.backend import create_backend
 
     report = detect_codex().to_dict()
     report["selected_backend"] = backend
+    capabilities = asyncio.run(create_backend(backend).doctor())
+    report["backend_capabilities"] = asdict(capabilities)
+    report["authentication"] = authentication_preflight(mode="existing-session").to_dict()
+    report["evaluation_ready"] = bool(capabilities.installed and capabilities.usage_events)
     typer.echo(json.dumps(report, indent=2))
+
+
+@codex_exec_app.command("probe")
+def codex_exec_probe(
+    output_format: Annotated[str, typer.Option("--format")] = "text",
+    output: Annotated[Path | None, typer.Option("--output")] = None,
+    allow_hook_trust_bypass: Annotated[bool, typer.Option("--allow-hook-trust-bypass")] = False,
+) -> None:
+    """Run one bounded authenticated JSONL/hook contract probe in a disposable Git fixture."""
+    import asyncio
+    import shutil
+    import subprocess
+    import tempfile
+
+    from llmcut.integrations.codex.auth import authentication_preflight
+    from llmcut.integrations.codex.backend import codex_agent_environment, create_backend
+    from llmcut.integrations.codex.hooks.capabilities import capabilities_for
+    from llmcut.integrations.codex.hooks.config import (
+        definition_digest,
+        inline_overrides,
+        proposed_document,
+    )
+
+    if output_format not in {"text", "json"}:
+        raise typer.BadParameter("format must be text or json")
+    if not allow_hook_trust_bypass:
+        raise typer.BadParameter("--allow-hook-trust-bypass is required for the hook probe")
+    auth = authentication_preflight(mode="existing-session")
+    if not auth.automation_ready:
+        raise typer.BadParameter(auth.diagnostic or "Codex authentication is unavailable")
+    root = Path(tempfile.mkdtemp(prefix="llmcut-exec-probe-"))
+    os.chmod(root, 0o700)
+    try:
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "probe@llmcut.invalid"], cwd=root, check=True
+        )
+        subprocess.run(["git", "config", "user.name", "llmcut probe"], cwd=root, check=True)
+        (root / "README.md").write_text("disposable llmcut exec probe\n")
+        (root / "test_probe.py").write_text(
+            "import pytest\n\n@pytest.mark.parametrize('value', range(240))\n"
+            "def test_value(value):\n    assert value >= 0\n"
+        )
+        subprocess.run(["git", "add", "README.md", "test_probe.py"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-qm", "probe fixture"], cwd=root, check=True)
+        hook_dir = root / ".codex"
+        hook_dir.mkdir(mode=0o700)
+        hook_file = hook_dir / "hooks.json"
+        hook_file.write_text(json.dumps(proposed_document(), separators=(",", ":")) + "\n")
+        os.chmod(hook_file, 0o600)
+        state = root.parent / f".{root.name}-state"
+        metrics = root.parent / f".{root.name}-metrics.jsonl"
+        environment = codex_agent_environment((), "probe", "existing-session", None)
+        environment.update(
+            {
+                "LLMCUT_HOOK_REPO": str(root),
+                "LLMCUT_HOOK_STATE": str(state),
+                "LLMCUT_HOOK_METRICS": str(metrics),
+                "LLMCUT_HOOK_DEFINITION_DIGEST": definition_digest(),
+            }
+        )
+        backend = create_backend("exec", allow_hook_trust_bypass=True)
+        capabilities = asyncio.run(backend.doctor())
+        result = asyncio.run(
+            backend.run(
+                task=(
+                    "Use Bash once to run `python -m pytest -vv` and then report whether its exact "
+                    "result was available. Do not edit files."
+                ),
+                cwd=root,
+                model="gpt-5.6-terra",
+                reasoning="low",
+                sandbox="workspace-write",
+                approval_policy="never",
+                timeout=180,
+                max_turns=1,
+                environment=environment,
+                config_overrides=inline_overrides(),
+                validation_callback=None,
+                cancellation=None,
+            )
+        )
+        metric_count = len(metrics.read_text().splitlines()) if metrics.is_file() else 0
+        compacted = 0
+        if metrics.is_file():
+            compacted = sum(
+                json.loads(line).get("applied") is True for line in metrics.read_text().splitlines()
+            )
+        runtime = capabilities.runtime_version or "unavailable"
+        report = {
+            "runtime_version": runtime,
+            "jsonl_contract": "observed",
+            "terminal_state": result.status,
+            "usage_fields": sorted(result.usage or {}),
+            "usage": result.usage,
+            "command_events": sum(event.kind == "command_execution" for event in result.events),
+            "hook_events": metric_count,
+            "compacted_events": compacted,
+            "exclusive_replacement_capability": capabilities_for(runtime).post_replacement,
+            "resume_capability": capabilities.resumable_turns,
+            "resolved_model_observation": "unavailable",
+            "process_cleanup": "observed"
+            if getattr(backend, "_process", None) is None
+            else "failed",
+            "hook_definition_digest": definition_digest(),
+            "trust_bypass": True,
+            "result_state": (
+                "passed"
+                if result.status == "completed" and metric_count > 0 and compacted > 0
+                else "failed_hook_activation"
+            ),
+        }
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+        if "state" in locals():
+            shutil.rmtree(state, ignore_errors=True)
+        if "metrics" in locals():
+            metrics.unlink(missing_ok=True)
+    rendered = (
+        json.dumps(report, indent=2)
+        if output_format == "json"
+        else "\n".join(f"{key}: {value}" for key, value in report.items())
+    )
+    if output is not None:
+        target = output.resolve()
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        target.write_text(rendered + "\n")
+        os.chmod(target, 0o600)
+    else:
+        typer.echo(rendered)
+    if report["result_state"] != "passed":
+        raise typer.Exit(1)
 
 
 @codex_app.command("auth")
