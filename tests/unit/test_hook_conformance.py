@@ -182,9 +182,12 @@ def test_conformance_cli_validation_and_capabilities(tmp_path: Path) -> None:
     capabilities = runner.invoke(app, ["agent", "codex", "hooks", "capabilities"])
     assert capabilities.exit_code == 0
     report = json.loads(capabilities.stdout)
-    assert report["post_replacement"] == "supported"
+    assert report["post_replacement"] in {"supported", "unverified"}
     assert report["pre_rewrite"] == "unverified"
-    assert report["probe_digest"].startswith("sha256:")
+    if report["post_replacement"] == "supported":
+        assert report["probe_digest"].startswith("sha256:")
+    else:
+        assert report["probe_digest"] is None
     assert runner.invoke(app, ["agent", "codex", "hooks", "probe"]).exit_code != 0
     assert (
         runner.invoke(

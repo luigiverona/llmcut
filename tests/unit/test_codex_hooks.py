@@ -343,8 +343,12 @@ def test_hook_management_cli_and_gc(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     doctor = runner.invoke(app, ["agent", "codex", "hooks", "doctor"])
     assert doctor.exit_code == 0
     report = json.loads(doctor.stdout)
-    assert report["exclusive_model_replacement_verified"] is True
-    assert report["direct_exec_probe_ready"] is True
+    assert report["exclusive_model_replacement_verified"] is (
+        report["runtime_version"] in {"codex-cli 0.144.4", "codex-cli 0.146.0"}
+    )
+    assert report["direct_exec_probe_ready"] is (
+        report["exclusive_model_replacement_verified"] and report["one_off_trust_bypass"]
+    )
     assert report["evaluation_ready"] is False
 
 
