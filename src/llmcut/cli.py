@@ -730,6 +730,7 @@ def codex_hooks_doctor() -> None:
     import shutil
     import subprocess
 
+    from llmcut.integrations.codex.hooks.capabilities import capabilities_for
     from llmcut.integrations.codex.hooks.config import definition_digest
 
     executable = shutil.which("codex")
@@ -745,6 +746,7 @@ def codex_hooks_doctor() -> None:
         )
         bypass = "--dangerously-bypass-hook-trust" in help_result.stdout
     target = _hook_config_path()
+    capabilities = capabilities_for(version or "unavailable")
     typer.echo(
         json.dumps(
             {
@@ -756,10 +758,18 @@ def codex_hooks_doctor() -> None:
                 "configured": target.is_file(),
                 "hook_definition_digest": definition_digest(),
                 "trust_state": "observable through Codex /hooks only",
-                "exclusive_model_replacement_verified": False,
+                "exclusive_model_replacement_verified": (
+                    capabilities.post_replacement == "supported"
+                ),
+                "direct_exec_probe_ready": bool(
+                    executable and bypass and capabilities.post_replacement == "supported"
+                ),
                 "evaluation_ready": False,
                 "evaluation_blocker": (
-                    "installed runtime probe exposed original result and hook feedback"
+                    "SDK App Server hook activation was not observed; direct-exec conformance "
+                    "does not establish evaluation-surface support"
+                    if capabilities.post_replacement == "supported"
+                    else "exact runtime version has no committed direct-exec replacement probe"
                 ),
                 "one_off_trust_bypass": bypass,
             },
@@ -811,6 +821,68 @@ def codex_hooks_remove(
     )
 
 
+@codex_hooks_app.command("capabilities")
+def codex_hooks_capabilities() -> None:
+    """Report only version-bound, committed hook conformance evidence."""
+    import shutil
+    import subprocess
+
+    executable = shutil.which("codex")
+    version = "unavailable"
+    if executable:
+        result = subprocess.run(
+            [executable, "--version"], text=True, capture_output=True, timeout=5, check=False
+        )
+        if result.returncode == 0:
+            version = result.stdout.strip()
+    from llmcut.integrations.codex.hooks.capabilities import capabilities_for
+
+    report = capabilities_for(version).to_dict()
+    report["detail"] = "capabilities are valid only for an exact probed runtime version"
+    typer.echo(json.dumps(report, indent=2))
+
+
+@codex_hooks_app.command("probe")
+def codex_hooks_probe(
+    post_tool_use: Annotated[bool, typer.Option("--post-tool-use")] = False,
+    pre_tool_use: Annotated[bool, typer.Option("--pre-tool-use")] = False,
+    output_format: Annotated[str, typer.Option("--format")] = "text",
+    output: Annotated[Path | None, typer.Option("--output")] = None,
+    allow_hook_trust_bypass: Annotated[bool, typer.Option("--allow-hook-trust-bypass")] = False,
+    variant: Annotated[str | None, typer.Option("--variant", hidden=True)] = None,
+) -> None:
+    """Run an explicit, version-bound hook conformance probe."""
+    from llmcut.integrations.codex.hooks.conformance import PostVariant, run_live_post_matrix
+
+    if post_tool_use == pre_tool_use:
+        raise typer.BadParameter("select exactly one conformance probe")
+    if not allow_hook_trust_bypass:
+        raise typer.BadParameter("--allow-hook-trust-bypass is required for automation")
+    if pre_tool_use:
+        raise typer.BadParameter(
+            "PreToolUse probe is unavailable until the PostToolUse matrix runs"
+        )
+    if output_format not in {"text", "json"}:
+        raise typer.BadParameter("format must be text or json")
+    variants = (PostVariant(variant),) if variant else None
+    executable = os.environ.get("LLMCUT_PROBE_CODEX", "codex")
+    results = [
+        asdict(item) for item in run_live_post_matrix(executable=executable, variants=variants)
+    ]
+    rendered = (
+        json.dumps(results, indent=2)
+        if output_format == "json"
+        else "\n".join(f"{item['variant']}: {item['state']}" for item in results)
+    )
+    if output is not None:
+        target = output.resolve()
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        target.write_text(rendered + "\n")
+        os.chmod(target, 0o600)
+    else:
+        typer.echo(rendered)
+
+
 @hook_app.command("handle")
 def hook_handle() -> None:
     """Handle one bounded Codex hook event from stdin; malformed input passes through."""
@@ -826,6 +898,24 @@ def hook_handle() -> None:
             append_metrics(Path(metrics_path), metrics)
     if response is not None:
         typer.echo(json.dumps(response, separators=(",", ":")))
+
+
+@hook_app.command("conformance-handle", hidden=True)
+def hook_conformance_handle(
+    state: Annotated[Path, typer.Option("--state")],
+) -> None:
+    from llmcut.integrations.codex.hooks.config import MAX_HOOK_INPUT
+    from llmcut.integrations.codex.hooks.conformance import handle_conformance_hook
+
+    response, exit_code, stderr = handle_conformance_hook(
+        sys.stdin.buffer.read(MAX_HOOK_INPUT + 1), state
+    )
+    if stderr:
+        typer.echo(stderr, err=True)
+    if response is not None:
+        typer.echo(json.dumps(response, separators=(",", ":")))
+    if exit_code:
+        raise typer.Exit(exit_code)
 
 
 def _hook_store() -> Any:

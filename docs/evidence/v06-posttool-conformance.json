@@ -1,0 +1,57 @@
+{
+  "schema_version": "1",
+  "timestamp": "2026-08-06T01:56:27Z",
+  "event": "PostToolUse",
+  "tool": "Bash",
+  "surface": "codex exec --json",
+  "trust_mode": "documented_one_off_bypass",
+  "method": "unpredictable per-run canaries; strict model-returned JSON; metadata only",
+  "original_bytes": 24143,
+  "replacement_bytes": 45,
+  "runtimes": [
+    {
+      "runtime": "codex-cli 0.146.0",
+      "results": [
+        ["none", "nonexclusive", true, true, true, false, 0, 32156],
+        ["additional-context", "nonexclusive", true, false, true, true, 0, 29184],
+        ["continue-stop-reason", "nonexclusive", true, true, true, false, 0, 32177],
+        ["continue-additional-context", "nonexclusive", true, false, true, true, 0, 29176],
+        ["continue-both", "nonexclusive", true, false, true, true, 0, 29192],
+        ["block-reason", "exclusive", false, false, false, true, 0, 27629],
+        ["block-reason-additional-context", "exclusive", false, false, false, true, 0, 27638],
+        ["exit-two", "exclusive", false, false, false, true, 0, 27637]
+      ],
+      "block_reason_repeats": [
+        ["exclusive", false, false, false, true, 0, 27628],
+        ["exclusive", false, false, false, true, 0, 27630]
+      ]
+    },
+    {
+      "runtime": "codex-cli 0.144.4",
+      "results": [
+        ["none", "nonexclusive", true, true, true, false, 0, 30334],
+        ["additional-context", "nonexclusive", true, false, true, true, 0, 27325],
+        ["continue-stop-reason", "nonexclusive", true, true, true, false, 0, 31627],
+        ["continue-additional-context", "nonexclusive", true, false, true, true, 0, 27298],
+        ["continue-both", "nonexclusive", true, false, true, true, 0, 28619],
+        ["block-reason", "exclusive", false, false, false, true, 0, 27058],
+        ["block-reason-additional-context", "exclusive", false, false, false, true, 0, 25787],
+        ["exit-two", "exclusive", false, false, false, true, 0, 27047]
+      ]
+    }
+  ],
+  "result_columns": [
+    "variant",
+    "state",
+    "original_head_present",
+    "original_middle_present",
+    "original_tail_present",
+    "compact_only_present",
+    "command_exit_code",
+    "agent_input_tokens"
+  ],
+  "selected_response": {"decision": "block", "reason": "<compact exact projection>"},
+  "pre_tool_use_probe": "not_run; canonical PostToolUse replacement passed",
+  "release_statistics_eligible": false,
+  "contains_raw_output_or_canaries": false
+}
