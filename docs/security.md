@@ -63,3 +63,6 @@ Codex hook output is untrusted data. Exact hook evidence is kept outside reposit
 under restrictive permissions, without environment or authentication values. Hook failures pass
 through the original tool result. Persistent installation never grants trust; automated trust
 bypass is explicit, one-off, and limited to controlled evaluation.
+The conformance harness creates unpredictable canaries outside task text and hook configuration,
+stores only comparison metadata, and deletes scripts and hook state during cleanup. Capability
+claims expire on a runtime-version mismatch.

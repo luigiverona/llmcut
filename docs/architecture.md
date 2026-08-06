@@ -22,6 +22,11 @@ CI. Authentication discovery and child environments remain inside this boundary.
 evaluation sends the same task text to both modes and identifies llmcut MCP as the context-delivery
 intervention.
 
+The hook adapter is a separate Codex boundary. For an exact runtime version with committed
+conformance evidence, a PostToolUse handler may persist an exact large Bash result and return its
+deterministic projection as documented block feedback. This changes neither command execution nor
+exit status. Version mismatch disables the capability claim rather than extrapolating wire behavior.
+
 ## Canonical model and pipeline
 
 `CanonicalRequest` owns ordered `ContextBlock` instances and separate tool definitions. Blocks carry

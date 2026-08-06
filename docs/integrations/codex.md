@@ -8,6 +8,11 @@ the single compact `llmcut_context` tool. `adaptive` chooses among those three f
 task specificity, candidate confidence, large evidence, and estimated cost. `legacy-passive`
 preserves the v0.5 eight-tool surface for deprecated diagnostic comparison.
 
+`post-replace` enables version-proven exclusive Bash-result compaction without MCP. `hybrid`
+combines orientation and output compaction. Adaptive selection may choose the proven output path for
+large logs or expected verbose diagnostics, but keeps exact-path low-output controls off. MCP is not
+selected by default after authenticated pilots produced zero retrieval calls.
+
 Orientation contains only relative paths, indexed symbols and relationships, sizes, digests, and
 planner reasons. It defaults to a hard 200 estimated-token budget and is discarded if it cannot fit.
 It never contains source text, absolute paths, credentials, or validation policy. Inspection via
@@ -44,6 +49,11 @@ reasoning. Token usage is `agent_reported` only when `thread/tokenUsage/updated`
 otherwise it is unavailable. Subscription usage is always `subscription_unavailable` unless a
 future supported interface exposes it. No measured Codex or subscription savings are claimed by the
 offline release suite.
+
+Hook capability is exact-version bound. `llmcut agent codex hooks capabilities` reports PostToolUse
+replacement as supported only for a runtime covered by committed canary evidence. The isolated
+matrix selected the smallest working `decision:"block"` response. PreToolUse rewriting remains
+unverified and unavailable because the canonical post-execution mechanism passed.
 
 ## Executable A/B evaluation
 

@@ -53,3 +53,12 @@ The first v0.6 adaptive-routing pilot is retained as metadata-only negative evid
 passed; orientation measured +2.23%, guided MCP -0.26%, and MCP adoption was zero. Hook pilots and
 release A/B runs remain separate. Component compaction estimates include recovery overhead, while
 agent-reported total input remains the release authority.
+
+The PostToolUse conformance matrix is metadata-only protocol evidence, not a task pilot.
+Original-only head, middle, and tail canaries were absent and the compact-only canary was present
+for `decision:"block"`; additive and `continue:false` variants did not meet that rule. The selected
+shape was repeated twice before adoption.
+
+The later SDK pilot stopped at the activation gate: 8/8 outcomes passed, but the App Server-backed
+SDK runs recorded no hook events. Its apparent +7.15% representative median is explicitly not a
+compaction result and is excluded from release statistics. No hybrid or full-suite run followed.

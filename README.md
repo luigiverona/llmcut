@@ -215,7 +215,8 @@ The first v0.6 pilot preserved quality but did not satisfy the release gate. Ori
 occurred. MCP retrieval remains available for diagnostics, but it is not the default Codex
 optimization path because authenticated pilots produced zero MCP calls.
 
-The next candidate uses a reviewed Codex `PostToolUse` hook to replace supported large Bash results
+The hook candidate uses the documented `PostToolUse` `decision:"block"` response to replace
+supported large Bash results
 with exact bounded projections and digest-based Bash recovery. Hook compaction acts only on
 supported local tool results. Unknown, small, mutating, interactive, or unsafe-to-transform outputs
 pass through unchanged. See [hook output compaction](docs/hooks.md).

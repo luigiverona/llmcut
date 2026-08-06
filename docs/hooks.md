@@ -49,9 +49,23 @@ Component byte/token estimates diagnose hook behavior. Authenticated agent-repor
 the only authority for release savings. Hook support and wire formats can change with Codex; run
 `llmcut agent codex hooks doctor` before evaluation.
 
-## Current runtime blocker
+## Conformance result
 
-The authenticated `codex-cli 0.146.0` probe executed the hook and persisted exact evidence, but the
-next model response demonstrated access to both the original Bash result and compact hook feedback.
-Exclusive model-facing replacement was therefore not proven. Hook-based live pilots and release
-statistics are blocked; byte estimates from this probe are not token-savings evidence.
+The first hook probe tested a combined `continue:false`, `stopReason`, and `additionalContext`
+response. It did not establish that every supported PostToolUse replacement form was ineffective.
+The follow-up matrix tested each documented form separately with unpredictable canaries.
+`additionalContext` was additive; the tested `continue:false` forms were not exclusive. The smallest
+exclusive response was `decision:"block"` with `reason`, repeated twice on `codex-cli 0.146.0` and
+also reproduced on the SDK-pinned `codex-cli 0.144.4`. `llmcut` now emits only that shape.
+
+Capability evidence is bound to the exact runtime version and recorded, without canary values or
+raw output, in `docs/evidence/v06-posttool-conformance.json`. PreToolUse command rewriting was not
+probed or implemented because canonical PostToolUse replacement passed the selection rule. Hook
+pilots remain separate from release statistics, and conformance input counts are not savings
+evidence.
+
+Direct `codex exec` conformance and the production parser probe passed, but the first bounded SDK
+pilot observed zero hook events through the SDK-pinned App Server launch. All eight paired outcomes
+passed quality, yet no apparent token difference is attributed to llmcut without activation. The
+pilot stopped before hybrid and is retained as negative metadata in
+`docs/evidence/v06-posttool-sdk-pilot.json`.

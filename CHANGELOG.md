@@ -11,8 +11,11 @@
   Codex made no llmcut MCP calls.
 - Added an unreleased Codex `PostToolUse` hook candidate that conservatively compacts supported large
   Bash results while preserving exact digest-verified local recovery.
-- The installed-runtime probe did not demonstrate exclusive model-facing replacement, so the hook
-  pilot and v0.6 release remain blocked and no hook savings are claimed.
+- A canary-based conformance matrix showed that additive and `continue:false` responses were not
+  exclusive, while `decision:"block"` exclusively replaced the Bash result on exact Codex CLI
+  versions 0.146.0 and 0.144.4. No hook token savings are claimed before pilots.
+- The bounded SDK pilot preserved quality but observed zero hook activation through App Server, so
+  it stopped before hybrid; apparent token differences are not attributed to llmcut.
 
 ## 0.5.0 - 2026-08-03
 
