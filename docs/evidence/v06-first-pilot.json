@@ -1,0 +1,46 @@
+{
+  "schema_version": "1",
+  "provenance": "sanitized_metadata_derived_from_local_live_reports",
+  "release_statistics_eligible": false,
+  "generated_at": "2026-08-05T17:30:00Z",
+  "generation_command": "metadata-only extraction from /tmp/v06-pilot-{off,orientation,guided,legacy}.json; full artifacts intentionally not committed",
+  "report_digest": "sha256:b93eb36d27b0128b14033a8105d7ef8e5b460887a11d73fb2dc6ffdff63333fd",
+  "report_digest_scope": "canonical JSON serialization of the strategies object",
+  "suite_digest": "sha256:a4ea91e36cc9714a8088d118087de927a4ebabbe2174b327c32bf3ea34f37f36",
+  "model": "gpt-5.6-terra",
+  "reasoning_effort": "low",
+  "seed": 6061,
+  "quality": {"passed_runs": 24, "total_runs": 24},
+  "source_artifacts": [
+    {"strategy": "off", "sha256": "e765a05fa278bdd991104f9ae0353c913bf791f10b1ea38b158c668eb7d36279"},
+    {"strategy": "orientation", "sha256": "ee71b3de6cb795d478737d94bb62e334f0e3d815aa6c1b42e9bce9d354118aea"},
+    {"strategy": "guided", "sha256": "a4946b4a5def480e77711cda0a55c028b319f7f92b07ec8ab3f40742d9520a31"},
+    {"strategy": "legacy-passive", "sha256": "c48e7aaadad212a98acd4048aab39cc5a9dd1ada41f1384d437f4741b0fa931d"}
+  ],
+  "strategies": {
+    "orientation": {
+      "representative_median_agent_input_reduction_percent": 2.234321952743964,
+      "pairs": [
+        {"task": "ambiguous-repository", "baseline_input": 16455, "optimized_input": 15765, "quality": true, "mcp_calls": 0},
+        {"task": "large-diagnostic", "baseline_input": 14888, "optimized_input": 14847, "quality": true, "mcp_calls": 0},
+        {"task": "no-benefit-control", "baseline_input": 14332, "optimized_input": 14577, "quality": true, "mcp_calls": 0}
+      ],
+      "discovery_observation": "partially_observed; ambiguous task shell commands 14 to 8 and searches 4 to 2"
+    },
+    "guided": {
+      "representative_median_agent_input_reduction_percent": -0.2603790525734855,
+      "pairs": [
+        {"task": "ambiguous-repository", "baseline_input": 16188, "optimized_input": 15739, "quality": true, "mcp_calls": 0},
+        {"task": "large-diagnostic", "baseline_input": 14904, "optimized_input": 15395, "quality": true, "mcp_calls": 0},
+        {"task": "no-benefit-control", "baseline_input": 14399, "optimized_input": 14753, "quality": true, "mcp_calls": 0}
+      ]
+    }
+  },
+  "claim_states": {
+    "agent_input": "agent_reported_authenticated_historical_pilot",
+    "provider_input": "unavailable",
+    "subscription_usage": "unavailable",
+    "universal_savings": "withheld",
+    "release_gate": "failed"
+  }
+}

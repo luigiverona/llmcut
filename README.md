@@ -210,6 +210,16 @@ the explicit, backed-up, atomic `init` command. The Codex integration is experim
 token or subscription reduction is claimed without a live supported harness measurement. See
 [MCP](docs/mcp.md) and [Codex integration](docs/integrations/codex.md).
 
+The first v0.6 pilot preserved quality but did not satisfy the release gate. Orientation produced a
++2.23% representative median reduction, guided MCP produced -0.26%, and no live MCP retrieval calls
+occurred. MCP retrieval remains available for diagnostics, but it is not the default Codex
+optimization path because authenticated pilots produced zero MCP calls.
+
+The next candidate uses a reviewed Codex `PostToolUse` hook to replace supported large Bash results
+with exact bounded projections and digest-based Bash recovery. Hook compaction acts only on
+supported local tool results. Unknown, small, mutating, interactive, or unsafe-to-transform outputs
+pass through unchanged. See [hook output compaction](docs/hooks.md).
+
 Executable A/B evaluation is available with
 `llmcut agent eval --agent codex --backend sdk --suite suite.toml`. It uses isolated paired
 worktrees, repeated and recorded ordering, official SDK events, argv-safe deterministic validation,

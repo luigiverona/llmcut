@@ -23,3 +23,8 @@ outside that shell boundary. Use `llmcut mcp doctor` and `llmcut mcp inspect` be
 
 MCP makes retrieval available; it does not itself prove that an agent omitted context or consumed
 fewer tokens. Agent-harness or captured provider measurements are required for those claims.
+## Codex default path
+
+MCP retrieval remains available for diagnostics, but it is not the default Codex optimization path
+because authenticated pilots produced zero MCP calls. `guided-mcp` exposes the compact tool;
+`legacy-passive` preserves the eight-tool surface only for regression comparison.

@@ -6,6 +6,13 @@
   context strategies, task-aware orientation, compact retrieval, adaptive opt-out, private run
   state, discovery instrumentation, and release-ineligible pilot reporting.
 - Version 0.6.0 remains unreleased until the authenticated live gates pass.
+- Recorded the first adaptive pilot as a permanent negative result: all 24 runs preserved quality,
+  orientation measured a +2.23% representative median reduction, guided MCP measured -0.26%, and
+  Codex made no llmcut MCP calls.
+- Added an unreleased Codex `PostToolUse` hook candidate that conservatively compacts supported large
+  Bash results while preserving exact digest-verified local recovery.
+- The installed-runtime probe did not demonstrate exclusive model-facing replacement, so the hook
+  pilot and v0.6 release remain blocked and no hook savings are claimed.
 
 ## 0.5.0 - 2026-08-03
 

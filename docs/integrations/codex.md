@@ -122,3 +122,10 @@ The release-gating v0.5 authenticated suite completed six tasks with three repet
 no deterministic quality regressions. Supported agent usage events were available, but the median
 paired agent-input result showed no reduction. Accordingly llmcut makes no Codex token-reduction or
 subscription-reduction claim from this release.
+## Hook-based strategies
+
+Supported intervention names are `off`, `orientation`, `compact-output`, `hybrid`, `guided-mcp`,
+deprecated `legacy-passive`, and `adaptive`. Compatibility name `guided` retains the compact MCP
+diagnostic. Adaptive does not select MCP merely because a repository is large. Hook evaluation
+requires the explicit one-off trust-bypass option and a disposable fixture. See
+[hooks](../hooks.md).

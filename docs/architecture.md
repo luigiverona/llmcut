@@ -89,3 +89,9 @@ Baseline and optimized execution share an executor and immutable provider/model/
 track completeness, deterministic invariants, tokens, caching, recovery, retries, latency, and
 regression. A text heuristic can efficiently identify candidates, but never proves irrelevance;
 therefore the engine includes uncertain content and preserves every exclusion by reference.
+## Hook intervention boundary
+
+Codex interventions are decomposed into orientation, output compaction, recovery transport, and MCP
+surface. `compact-output` and `hybrid` use a Codex-specific hook adapter; hook policy is not placed
+in the provider-neutral managed runtime. Exact hook evidence has a separate lifecycle from managed
+evidence. See [hooks.md](hooks.md).

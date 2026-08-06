@@ -46,3 +46,10 @@ the observed bounded suite.
 Measurement layers are never conflated: `payload` describes model-bound requests llmcut generated;
 `provider` requires bound API usage or an official count endpoint; `agent` requires supported harness
 events; `subscription` is reported only if the subscription system provides a reliable metric.
+## First v0.6 pilot and hook measurement
+
+The first v0.6 adaptive-routing pilot is retained as metadata-only negative evidence in
+`docs/evidence/v06-first-pilot.json` and is excluded from later release statistics. All 24 outcomes
+passed; orientation measured +2.23%, guided MCP -0.26%, and MCP adoption was zero. Hook pilots and
+release A/B runs remain separate. Component compaction estimates include recovery overhead, while
+agent-reported total input remains the release authority.

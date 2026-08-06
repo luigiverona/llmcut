@@ -57,3 +57,9 @@ stale revisions, bounds line ranges and result volume, rejects traversal by cons
 regex length and high-risk backtracking constructs. Identical calls are cached; repeated model calls
 are stopped. Cancellation and provider failures close the bounded loop without executing external
 capabilities.
+## Codex hooks
+
+Codex hook output is untrusted data. Exact hook evidence is kept outside repositories and captures,
+under restrictive permissions, without environment or authentication values. Hook failures pass
+through the original tool result. Persistent installation never grants trust; automated trust
+bypass is explicit, one-off, and limited to controlled evaluation.

@@ -1,0 +1,20 @@
+{
+  "schema_version": "1",
+  "timestamp": "2026-08-05T18:10:00Z",
+  "runtime": "codex-cli 0.146.0",
+  "hook_event": "PostToolUse",
+  "tool": "Bash",
+  "trust_mode": "documented_one_off_bypass",
+  "hook_response": "continue_false_with_stop_reason_and_additional_context",
+  "command_status": 0,
+  "original_result_bytes": 11845,
+  "compact_result_bytes": 4834,
+  "exact_evidence_persisted": true,
+  "model_reported_original_first_line": true,
+  "model_reported_compact_evidence_id": true,
+  "exclusive_model_facing_replacement_demonstrated": false,
+  "functional_gate_passed": false,
+  "conclusion": "The runtime exposed information from both the original result and compact hook feedback; no input reduction may be claimed.",
+  "release_statistics_eligible": false,
+  "credentials_or_output_persisted": false
+}
