@@ -1,0 +1,52 @@
+schema_version = "1"
+agent = "codex"
+repetitions = 1
+order = "random"
+seed = 6062
+timeout_seconds = 240
+repository_root = "../../fixtures/benchmarks"
+
+[execution]
+model = "gpt-5.6-terra"
+reasoning_effort = "low"
+sandbox = "workspace-write"
+approval_policy = "never"
+backend = "sdk"
+auth_mode = "existing-session"
+comparison_design = "standard-baseline"
+context_strategy = "post-replace"
+orientation_budget = 200
+retrieval_budget = 4096
+environment_allowlist = []
+
+[[tasks]]
+id = "large-failing-test-output"
+repository = "hook-output"
+prompt = "The order discount behavior is wrong for a normal percentage. Diagnose and fix it. Use the verbose pytest tests/verbose_orders.py suite while working."
+validation = [["python", "tests/validate_orders.py"]]
+allowed_changes = ["app/orders.py"]
+required_files = ["tests/verbose_orders.py", "app/orders.py"]
+
+[[tasks]]
+id = "large-successful-validation"
+repository = "hook-output"
+prompt = "Principal matching mishandles international case equivalence. Correct it and use the verbose pytest tests/verbose_permissions.py suite to validate the full matrix."
+validation = [["python", "tests/validate_permissions.py"]]
+allowed_changes = ["app/permissions.py"]
+required_files = ["tests/verbose_permissions.py", "app/permissions.py"]
+
+[[tasks]]
+id = "multi-diagnostic-typecheck"
+repository = "hook-output"
+prompt = "The default retry policy violates its declared runtime and typing contract. Correct it, run the focused type checker, and validate the schema test."
+validation = [["python", "tests/validate_schema.py"]]
+allowed_changes = ["app/schema.py"]
+required_files = ["tests/verbose_schema.py", "app/schema.py"]
+
+[[tasks]]
+id = "no-benefit-control"
+repository = "python-defect"
+prompt = "Fix app/callback.py timeout units and run python tests/validate_callback.py."
+validation = [["python", "tests/validate_callback.py"]]
+allowed_changes = ["app/callback.py"]
+required_files = ["app/callback.py"]

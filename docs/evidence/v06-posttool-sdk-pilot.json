@@ -1,0 +1,31 @@
+{
+  "schema_version": "1",
+  "timestamp": "2026-08-06T02:28:35Z",
+  "runtime": "openai-codex SDK with pinned codex-cli 0.144.4 App Server",
+  "model": "gpt-5.6-terra",
+  "reasoning_effort": "low",
+  "strategy": "post-replace",
+  "seed": 6062,
+  "runs": 8,
+  "quality_successes": 8,
+  "quality_regressions": 0,
+  "paired_agent_input_reduction_percent": {
+    "large_failing_test_output": 2.2416965236758015,
+    "large_successful_validation": 10.318220519369945,
+    "multi_diagnostic_typecheck": 7.154721624115656,
+    "no_benefit_control": -0.0763199888989107
+  },
+  "representative_median_percent": 7.154721624115656,
+  "hook_events": 0,
+  "compacted_events": 0,
+  "hook_observation": "unavailable",
+  "intervention_observed": false,
+  "stop_reason": "hook activation was not observed through the SDK App Server launch path",
+  "hybrid_arm_run": false,
+  "release_statistics_eligible": false,
+  "savings_claim_eligible": false,
+  "local_report_digest": "sha256:fe01cd4f5c60a0e3907057a15aeac79532f3f7c81afb84b1242c88db10d1feb0",
+  "contains_prompts_or_output": false,
+  "contains_credentials": false,
+  "note": "Apparent reductions are not attributed to llmcut because the required intervention was not observed."
+}
