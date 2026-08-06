@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -121,6 +122,47 @@ for line in sys.stdin:
             },
         }
     )
+    if mode == "optimized" and context_strategy in {"post-replace", "compact-output", "hybrid"}:
+        raw_output = (
+            "============================= test session starts ==============================\n"
+            + "." * 12_000
+            + "\n============================== 40 passed in 1.00s ==============================\n"
+        )
+        hook_event = {
+            "session_id": "thread-1",
+            "turn_id": turn_id,
+            "cwd": str(cwd.resolve()),
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_use_id": f"command-{turns}",
+            "tool_input": {"command": "pytest -vv"},
+            "tool_response": {"stdout": raw_output, "stderr": "", "exit_code": 0},
+        }
+        hook = subprocess.run(
+            [sys.executable, "-m", "llmcut", "hook", "handle"],
+            input=json.dumps(hook_event),
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        replacement = json.loads(hook.stdout)["reason"] if hook.stdout else raw_output
+        send(
+            {
+                "jsonrpc": "2.0",
+                "method": "item/completed",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": turn_id,
+                    "item": {
+                        "id": f"hook-result-{turns}",
+                        "type": "agentMessage",
+                        "text": replacement,
+                        "status": "completed",
+                    },
+                },
+            }
+        )
     send(
         {
             "jsonrpc": "2.0",

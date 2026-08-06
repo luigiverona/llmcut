@@ -12,6 +12,13 @@ import pytest
 from typer.testing import CliRunner
 
 from llmcut.cli import app
+from llmcut.integrations.codex.executor import (
+    _cleanup_hook_artifacts,
+    _hook_metrics,
+    _hook_overrides,
+    _hook_replacement_verified,
+    _write_evaluation_hook,
+)
 from llmcut.integrations.codex.hooks.classify import CommandClass, classify_command
 from llmcut.integrations.codex.hooks.compact import compact_bash_result
 from llmcut.integrations.codex.hooks.config import (
@@ -22,7 +29,7 @@ from llmcut.integrations.codex.hooks.config import (
     remove_hooks,
 )
 from llmcut.integrations.codex.hooks.handler import append_metrics, handle_hook
-from llmcut.integrations.codex.hooks.protocol import parse_hook_input
+from llmcut.integrations.codex.hooks.protocol import parse_bash_response, parse_hook_input
 from llmcut.integrations.codex.hooks.state import HookEvidenceStore, exact_lines, render_exact
 
 
@@ -66,6 +73,8 @@ def _pytest_output(*, failed: bool = True) -> str:
     ("command", "expected"),
     [
         ("pytest -q", CommandClass.TEST),
+        ("/usr/bin/bash -lc 'pytest -q'", CommandClass.TEST),
+        ("uv run pytest -q", CommandClass.TEST),
         ("python -m pytest", CommandClass.TEST),
         ("node --test", CommandClass.TEST),
         ("npx tsc --noEmit", CommandClass.TYPECHECK),
@@ -97,6 +106,30 @@ def test_protocol_rejects_unknown_and_escape(tmp_path: Path) -> None:
     value = json.loads(_event(repo, "output"))
     value["tool_name"] = "apply_patch"
     assert parse_hook_input(json.dumps(value).encode(), repo) is None
+    assert parse_hook_input(b"", repo) is None
+    assert parse_hook_input(json.dumps([]).encode(), repo) is None
+    assert parse_hook_input(json.dumps({"hook_event_name": "Stop"}).encode(), repo) is None
+    for field, invalid in (("cwd", 1), ("tool_input", "bad")):
+        value = json.loads(_event(repo, "output"))
+        value[field] = invalid
+        assert parse_hook_input(json.dumps(value).encode(), repo) is None
+    for command in (None, "", "x" * 131_073):
+        value = json.loads(_event(repo, "output"))
+        value["tool_input"]["command"] = command
+        assert parse_hook_input(json.dumps(value).encode(), repo) is None
+    value = json.loads(_event(repo, "output"))
+    value["cwd"] = str(repo / "missing")
+    assert parse_hook_input(json.dumps(value).encode(), repo) is None
+    invalid_responses: tuple[object, ...] = (
+        None,
+        [],
+        {"stdout": 1, "exit_code": 0},
+        {"exit_code": True},
+    )
+    for invalid_response in invalid_responses:
+        assert parse_bash_response(invalid_response) is None
+    combined = parse_bash_response("combined")
+    assert combined and combined.representation == "combined_text_status_unavailable"
 
 
 def test_compactor_preserves_failure_and_requires_evidence() -> None:
@@ -206,7 +239,7 @@ def test_handler_compacts_and_fails_open(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     config = HookConfig(repo, tmp_path / "state", threshold_bytes=1024, maximum_compact_bytes=8000)
     response, metrics = handle_hook(_event(repo, _pytest_output()), config)
-    assert response and response["continue"] is False
+    assert response and response["decision"] == "block"
     assert metrics["applied"] is True
     assert metrics["evidence_created"] is True
     response, metrics = handle_hook(b"bad", config)
@@ -253,8 +286,8 @@ def test_real_hook_subprocess_model_visible_replacement(tmp_path: Path) -> None:
     )
     assert result.returncode == 0
     replacement = json.loads(result.stdout)
-    assert replacement["continue"] is False
-    assert "OAuthTimeoutError" in replacement["stopReason"]
+    assert replacement["decision"] == "block"
+    assert "OAuthTimeoutError" in replacement["reason"]
 
 
 def test_recovery_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -309,7 +342,10 @@ def test_hook_management_cli_and_gc(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert runner.invoke(app, ["hook", "gc", "--maximum-age", "-1"]).exit_code != 0
     doctor = runner.invoke(app, ["agent", "codex", "hooks", "doctor"])
     assert doctor.exit_code == 0
-    assert json.loads(doctor.stdout)["exclusive_model_replacement_verified"] is False
+    report = json.loads(doctor.stdout)
+    assert report["exclusive_model_replacement_verified"] is True
+    assert report["direct_exec_probe_ready"] is True
+    assert report["evaluation_ready"] is False
 
 
 def test_protocol_response_variants_and_config_bounds(tmp_path: Path) -> None:
@@ -383,6 +419,61 @@ def test_additional_classifier_and_compactor_branches() -> None:
     assert result.applied
 
 
+def test_compactor_conservative_projection_fallbacks() -> None:
+    evidence = "sha256:" + "f" * 64
+    cases = (
+        (
+            CommandClass.TEST,
+            "test session starts\n"
+            + "." * 9000
+            + "\n================ 1 failed in 1s ================\n",
+            1,
+            8000,
+        ),
+        (
+            CommandClass.TEST,
+            "================ FAILURES ================\nE failure\n"
+            + "z" * 9000
+            + "\n================ 1 failed in 1s ================\n",
+            1,
+            8000,
+        ),
+        (CommandClass.TYPECHECK, "no diagnostics\n" * 1000, 1, 8000),
+        (CommandClass.TYPECHECK, ("a.py:1: error: bad\n" * 1000), 1, 3000),
+        (CommandClass.SEARCH, "\n".join(f"unique{index}" for index in range(2000)), 0, 8000),
+        (CommandClass.SEARCH, ("duplicate\n" * 1000) + ("x" * 3000), 0, 3000),
+    )
+    for classification, output, code, limit in cases:
+        result = compact_bash_result(
+            classification=classification,
+            stdout=output,
+            stderr="",
+            exit_code=code,
+            threshold_bytes=1024,
+            maximum_compact_bytes=limit,
+            evidence_id=evidence,
+        )
+        assert not result.applied
+    too_small_to_benefit = compact_bash_result(
+        classification=CommandClass.SEARCH,
+        stdout="a\na\n",
+        stderr="",
+        exit_code=0,
+        threshold_bytes=1,
+        maximum_compact_bytes=8000,
+        evidence_id=evidence,
+    )
+    assert too_small_to_benefit.reason == "projection is not beneficial"
+
+
+def test_handler_small_result_records_pass_through(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    response, metrics = handle_hook(_event(repo, "small", code=0), HookConfig(repo, tmp_path / "s"))
+    assert response is None
+    assert metrics["reason"] == "below threshold"
+
+
 def test_handler_cli_metrics_and_store_collection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -396,7 +487,7 @@ def test_handler_cli_metrics_and_store_collection(
     result = CliRunner().invoke(
         app, ["hook", "handle"], input=_event(repo, _pytest_output()).decode()
     )
-    assert result.exit_code == 0 and json.loads(result.stdout)["continue"] is False
+    assert result.exit_code == 0 and json.loads(result.stdout)["decision"] == "block"
     recorded = json.loads(metrics.read_text().splitlines()[0])
     assert recorded["applied"] is True
     append_metrics(metrics, {"event_supported": True})
@@ -475,3 +566,71 @@ def test_hook_command_fallback_and_handler_exception(
         _event(repo, _pytest_output()), HookConfig(repo, repo / "state")
     )
     assert response is None and "ValueError" in str(metrics["fallback_reason"])
+
+
+def test_evaluation_hook_configuration_metrics_and_cleanup(tmp_path: Path) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    config = _write_evaluation_hook(worktree)
+    assert stat.S_IMODE(config.stat().st_mode) == 0o600
+    assert json.loads(config.read_text())["hooks"]["PostToolUse"][0]["matcher"] == "^Bash$"
+    assert _hook_overrides() == ("features.hooks=true",)
+    assert _hook_replacement_verified("fake_codex.py", "fake")
+    assert not _hook_replacement_verified("codex", "sdk")
+    with pytest.raises(RuntimeError, match="without an existing"):
+        _write_evaluation_hook(worktree)
+
+    state = tmp_path / ".hook-evidence"
+    state.mkdir(mode=0o700)
+    (state / "entry").write_text("metadata")
+    metrics = tmp_path / ".hook-metrics.jsonl"
+    metrics.write_text(
+        "\n".join(
+            (
+                json.dumps(
+                    {
+                        "event_supported": True,
+                        "applied": True,
+                        "classification": "test",
+                        "original_bytes": 12000,
+                        "compact_bytes": 1000,
+                        "original_tokens_estimate": 4000,
+                        "compact_tokens_estimate": 333,
+                        "parser": "pytest",
+                    }
+                ),
+                "malformed",
+                json.dumps(
+                    {
+                        "event_supported": True,
+                        "applied": False,
+                        "classification": "recovery",
+                        "original_bytes": 100,
+                        "compact_bytes": 100,
+                    }
+                ),
+            )
+        )
+    )
+    observation = _hook_metrics(metrics)
+    assert observation["compacted_events"] == 1
+    assert observation["recovery_calls"] == 1
+    assert observation["parsers"] == ["pytest"]
+    _cleanup_hook_artifacts(state, metrics, tmp_path)
+    assert not state.exists() and not metrics.exists()
+    config.unlink()
+    config.parent.rmdir()
+
+
+def test_hook_capability_is_surface_and_version_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    completed = subprocess.CompletedProcess(["codex", "--version"], 0, "codex-cli 0.146.0\n", "")
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: completed)
+    assert _hook_replacement_verified("codex", "app-server")
+    completed = subprocess.CompletedProcess(["codex", "--version"], 1, "", "failure")
+    assert not _hook_replacement_verified("codex", "app-server")
+
+    def unavailable(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise OSError("missing")
+
+    monkeypatch.setattr(subprocess, "run", unavailable)
+    assert not _hook_replacement_verified("codex", "app-server")

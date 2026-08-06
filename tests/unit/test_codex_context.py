@@ -51,6 +51,19 @@ def test_explicit_path_and_adaptive_off(tmp_path: Path) -> None:
     assert plan.selected_strategy is ContextStrategy.OFF
     assert plan.selected_files[0].path == "app/callback.py"
     assert plan.orientation_text == ""
+    assert ContextStrategy.parse("guided-mcp") is ContextStrategy.GUIDED_MCP
+
+
+def test_adaptive_selects_version_proven_output_paths(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    log = repo / "diagnostics.log"
+    log.write_text("warning: unrelated\n" * 1000)
+    subprocess.run(["git", "add", "diagnostics.log"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "add diagnostics"], cwd=repo, check=True)
+    post = plan_codex_context(repo, "Inspect diagnostics.log", "adaptive")
+    assert post.selected_strategy is ContextStrategy.POST_REPLACE
+    hybrid = plan_codex_context(repo, "Diagnose the feature failures", "adaptive")
+    assert hybrid.selected_strategy is ContextStrategy.HYBRID
 
 
 def test_guided_plan_is_deterministic_bounded_and_metadata_only(tmp_path: Path) -> None:

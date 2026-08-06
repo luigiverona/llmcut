@@ -177,6 +177,8 @@ def write_agent_capture(evaluation: dict[str, Any], destination: Path) -> Path:
             if isinstance(run, dict)
         ]
         turns = []
+        from llmcut.integrations.codex.hooks.config import definition_digest
+
         for number, run in enumerate(runs, 1):
             requests = run.get("request_digests") or []
             responses = run.get("response_digests") or []
@@ -194,6 +196,15 @@ def write_agent_capture(evaluation: dict[str, Any], destination: Path) -> Path:
                     "validation_passed": run.get("validation_passed"),
                     "tool_calls": run.get("tool_calls", 0),
                     "mcp_calls": run.get("mcp_calls", 0),
+                    "hook": {
+                        "definition_digest": definition_digest(),
+                        "trust_mode": (
+                            "documented_one_off_bypass"
+                            if (run.get("hook_observation") or {}).get("hook_events", 0)
+                            else "disabled"
+                        ),
+                        "observation": run.get("hook_observation", {}),
+                    },
                 }
             )
         if not turns:

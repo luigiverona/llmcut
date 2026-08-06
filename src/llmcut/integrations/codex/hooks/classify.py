@@ -31,7 +31,7 @@ class ClassifiedCommand:
     reason: str
 
 
-def classify_command(command: str) -> ClassifiedCommand:
+def classify_command(command: str, *, _depth: int = 0) -> ClassifiedCommand:
     try:
         lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
         lexer.whitespace_split = True
@@ -52,6 +52,10 @@ def classify_command(command: str) -> ClassifiedCommand:
         segments.append(tuple(current))
     if not segments:
         return ClassifiedCommand(CommandClass.UNKNOWN, (), "empty command")
+    if len(segments) == 1 and _depth == 0:
+        wrapped = _unwrap_shell(segments[0])
+        if wrapped is not None:
+            return classify_command(wrapped, _depth=1)
     classes = tuple(_classify_segment(segment) for segment in segments)
     unsafe = {
         CommandClass.MUTATION,
@@ -90,7 +94,11 @@ def _classify_segment(argv: tuple[str, ...]) -> CommandClass:
         return CommandClass.INTERACTIVE
     if executable in {"rm", "mv", "cp", "install", "chmod", "chown", "tee", "dd", "truncate"}:
         return CommandClass.MUTATION
-    if executable in {"pytest", "py.test"} or lower[:3] == ["python", "-m", "pytest"]:
+    if (
+        executable in {"pytest", "py.test"}
+        or lower[:3] == ["python", "-m", "pytest"]
+        or (executable == "uv" and lower[1:3] == ["run", "pytest"])
+    ):
         return CommandClass.TEST
     if executable in {"node"} and "--test" in lower:
         return CommandClass.TEST
@@ -121,3 +129,12 @@ def _classify_segment(argv: tuple[str, ...]) -> CommandClass:
     if executable in {"make", "cmake", "cargo", "go"} and "build" in lower:
         return CommandClass.BUILD
     return CommandClass.UNKNOWN
+
+
+def _unwrap_shell(argv: tuple[str, ...]) -> str | None:
+    if len(argv) != 3:
+        return None
+    executable = argv[0].rsplit("/", 1)[-1]
+    if executable not in {"bash", "sh"} or argv[1] not in {"-c", "-lc"}:
+        return None
+    return argv[2]

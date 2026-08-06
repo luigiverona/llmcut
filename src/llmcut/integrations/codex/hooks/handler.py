@@ -8,7 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from llmcut.integrations.codex.hooks.classify import CommandClass, classify_command
-from llmcut.integrations.codex.hooks.compact import compact_bash_result
+from llmcut.integrations.codex.hooks.compact import CompactionResult, compact_bash_result
 from llmcut.integrations.codex.hooks.config import HookConfig
 from llmcut.integrations.codex.hooks.protocol import parse_hook_input, replacement_response
 from llmcut.integrations.codex.hooks.state import HookEvidenceStore
@@ -47,7 +47,7 @@ def handle_hook(
             maximum_compact_bytes=config.maximum_compact_bytes,
         )
         if preliminary.reason != "exact evidence unavailable":
-            metrics.update(asdict(preliminary))
+            metrics.update(_result_metrics(preliminary))
             return None, metrics
         store = HookEvidenceStore(config.state_root)
         evidence = store.put(
@@ -71,7 +71,7 @@ def handle_hook(
             maximum_compact_bytes=config.maximum_compact_bytes,
             evidence_id=evidence.evidence_id,
         )
-        metrics.update(asdict(result))
+        metrics.update(_result_metrics(result))
         if not result.applied or result.model_content is None:
             return None, metrics
         metrics["evidence_created"] = True
@@ -100,3 +100,9 @@ def append_metrics(path: Path, metrics: dict[str, object]) -> None:
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     with os.fdopen(descriptor, "a") as stream:
         stream.write(json.dumps(metrics, sort_keys=True, separators=(",", ":")) + "\n")
+
+
+def _result_metrics(result: CompactionResult) -> dict[str, object]:
+    values = asdict(result)
+    values.pop("model_content", None)
+    return values

@@ -21,6 +21,7 @@ STRATEGY_VALUES = {
     "off",
     "orientation",
     "compact-output",
+    "post-replace",
     "hybrid",
     "guided",
     "guided-mcp",
@@ -52,6 +53,7 @@ class ContextStrategy(StrEnum):
     OFF = "off"
     ORIENTATION = "orientation"
     COMPACT_OUTPUT = "compact-output"
+    POST_REPLACE = "post-replace"
     HYBRID = "hybrid"
     GUIDED = "guided"
     GUIDED_MCP = "guided-mcp"
@@ -77,6 +79,9 @@ class ContextStrategy(StrEnum):
                 True, False, RecoveryTransport.NONE, McpSurface.NONE
             ),
             ContextStrategy.COMPACT_OUTPUT: CodexIntervention(
+                False, True, RecoveryTransport.BASH, McpSurface.NONE
+            ),
+            ContextStrategy.POST_REPLACE: CodexIntervention(
                 False, True, RecoveryTransport.BASH, McpSurface.NONE
             ),
             ContextStrategy.HYBRID: CodexIntervention(
@@ -423,7 +428,7 @@ def _choose_strategy(
         )
     if large_evidence:
         return (
-            ContextStrategy.COMPACT_OUTPUT,
+            ContextStrategy.POST_REPLACE,
             ("large local tool output is likely", "Bash recovery avoids MCP schema overhead"),
             0.8,
             "high",

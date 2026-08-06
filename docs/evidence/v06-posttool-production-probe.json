@@ -1,0 +1,31 @@
+{
+  "schema_version": "1",
+  "timestamp": "2026-08-06T02:16:12Z",
+  "runtime": "codex-cli 0.146.0",
+  "mechanism": "PostToolUse decision:block reason-only",
+  "trust_mode": "documented_one_off_bypass",
+  "command_classification": "test",
+  "command_exit_code": 0,
+  "original_result_bytes": 12577,
+  "compact_result_bytes": 1214,
+  "parser": "pytest",
+  "parser_version": "1",
+  "exact_evidence_persisted": true,
+  "model_reported_compact_status": true,
+  "model_reported_evidence_reference": true,
+  "hook_events": 2,
+  "compacted_events": 1,
+  "pass_through_events": 1,
+  "agent_usage": {
+    "input_tokens": 28702,
+    "cached_input_tokens": 19968,
+    "output_tokens": 180,
+    "reasoning_output_tokens": 57
+  },
+  "runtime_capture_digest": "sha256:66424630ef1dd990d615e52b4fe5ed331cd7d3e0f9656a665c2a939ffff76ff8",
+  "metrics_digest": "sha256:0f8b7a93e33ef5468c68cf05097d40427aa3da43947469504116f3da90e8214a",
+  "release_statistics_eligible": false,
+  "contains_command_output": false,
+  "contains_credentials": false,
+  "note": "Protocol exclusivity is established by the separate unpredictable-canary conformance record; this probe confirms the production parser and recovery projection path."
+}

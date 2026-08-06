@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import random
@@ -34,8 +35,6 @@ from llmcut.integrations.codex.doctor import detect_codex
 from llmcut.integrations.codex.suite import AgentSuite, AgentTask
 from llmcut.model import digest_bytes
 from llmcut.tokens.estimate import ConservativeEstimator
-
-HOOK_REPLACEMENT_VERIFIED = False
 
 MAX_OUTPUT_BYTES = 64 * 1024
 MAX_DIFF_BYTES = 1024 * 1024
@@ -385,8 +384,9 @@ class CodexEvaluator:
         hook_overrides: tuple[str, ...] = ()
         hook_state: Path | None = None
         hook_metrics: Path | None = None
+        hook_config: Path | None = None
         if plan.selected_strategy.intervention.output_compaction:
-            if not HOOK_REPLACEMENT_VERIFIED:
+            if not _hook_replacement_verified(self.suite.executable, self.backend_name):
                 raise RuntimeError(
                     "hook output compaction is release-blocked: exclusive model-facing replacement "
                     "was not demonstrated by the installed Codex runtime"
@@ -398,6 +398,7 @@ class CodexEvaluator:
                 )
             hook_state = worktree.parent / ".hook-evidence"
             hook_metrics = worktree.parent / ".hook-metrics.jsonl"
+            hook_config = _write_evaluation_hook(worktree)
             hook_overrides = _hook_overrides()
         started = time.monotonic()
         run: CodexRun | None = None
@@ -443,6 +444,10 @@ class CodexEvaluator:
         finally:
             if state_path is not None:
                 state_path.unlink(missing_ok=True)
+            if hook_config is not None:
+                hook_config.unlink(missing_ok=True)
+                with contextlib.suppress(OSError):
+                    hook_config.parent.rmdir()
         if not validations:
             validations.extend(
                 _validate(
@@ -463,6 +468,7 @@ class CodexEvaluator:
         )
         mcp_payload = sum(int(item["data"].get("result_bytes", 0)) // 3 for item in mcp_events)
         hook_observation = _hook_metrics(hook_metrics)
+        _cleanup_hook_artifacts(hook_state, hook_metrics, worktree.parent)
         return AgentRunResult(
             task.id,
             repetition,
@@ -1055,7 +1061,12 @@ def _summary(tasks: list[dict[str, Any]], results: list[AgentRunResult]) -> dict
         for item in results
     )
     intervention_observed = any(
-        item.mode == "optimized" and (item.retrieval_calls > 0 or item.orientation_tokens > 0)
+        item.mode == "optimized"
+        and (
+            item.retrieval_calls > 0
+            or item.orientation_tokens > 0
+            or int(item.hook_observation.get("compacted_events", 0)) > 0
+        )
         for item in results
     )
     summary.update(
@@ -1101,14 +1112,49 @@ def _usage_median(values: list[dict[str, Any]], keys: tuple[str, ...]) -> float 
 
 
 def _hook_overrides() -> tuple[str, ...]:
-    from llmcut.integrations.codex.hooks.config import hook_command
+    return ("features.hooks=true",)
 
-    command = json.dumps(hook_command())
-    value = (
-        'hooks.PostToolUse=[{matcher="^Bash$",hooks=[{type="command",'
-        f"command={command},timeout=15,additionalContextLimit=9000}}]}}]"
-    )
-    return ("features.hooks=true", value)
+
+def _hook_replacement_verified(executable: str, backend: str) -> bool:
+    from llmcut.integrations.codex.hooks.capabilities import capabilities_for
+
+    if executable != "codex":
+        return True  # The configured fake runtime executes the real hook subprocess in tests.
+    if backend == "sdk":
+        return False  # Direct-exec conformance does not transfer to the App Server surface.
+    else:
+        try:
+            result = subprocess.run(
+                [executable, "--version"], text=True, capture_output=True, timeout=5, check=False
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        runtime = result.stdout.strip() if result.returncode == 0 else "unavailable"
+    return capabilities_for(runtime).post_replacement == "supported"
+
+
+def _write_evaluation_hook(worktree: Path) -> Path:
+    from llmcut.integrations.codex.hooks.config import proposed_document
+
+    directory = worktree / ".codex"
+    target = directory / "hooks.json"
+    if directory.exists():
+        raise RuntimeError(
+            "evaluation hook isolation requires a disposable fixture without an existing "
+            ".codex directory"
+        )
+    directory.mkdir(mode=0o700)
+    payload = json.dumps(proposed_document(), sort_keys=True, separators=(",", ":"))
+    descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w") as stream:
+            stream.write(payload)
+            stream.write("\n")
+    except BaseException:
+        target.unlink(missing_ok=True)
+        directory.rmdir()
+        raise
+    return target
 
 
 def _hook_metrics(path: Path | None) -> dict[str, Any]:
@@ -1152,6 +1198,16 @@ def _hook_metrics(path: Path | None) -> dict[str, Any]:
         "recovery_bytes": sum(int(item.get("original_bytes", 0)) for item in recoveries),
         "parsers": sorted({str(item.get("parser")) for item in compacted if item.get("parser")}),
     }
+
+
+def _cleanup_hook_artifacts(state: Path | None, metrics: Path | None, parent: Path) -> None:
+    root = parent.resolve(strict=True)
+    if metrics is not None and metrics.parent.resolve(strict=True) == root:
+        metrics.unlink(missing_ok=True)
+    if state is None or state.is_symlink() or state.parent.resolve(strict=True) != root:
+        return
+    if state.is_dir():
+        shutil.rmtree(state)
 
 
 def _usage_reduction(baseline: AgentRunResult, optimized: AgentRunResult) -> float | None:

@@ -80,11 +80,5 @@ def parse_bash_response(value: Any) -> BashResponse | None:
 
 
 def replacement_response(model_content: str) -> dict[str, Any]:
-    return {
-        "continue": False,
-        "stopReason": model_content,
-        "hookSpecificOutput": {
-            "hookEventName": "PostToolUse",
-            "additionalContext": model_content,
-        },
-    }
+    """Smallest runtime-proven exclusive PostToolUse feedback shape."""
+    return {"decision": "block", "reason": model_content}

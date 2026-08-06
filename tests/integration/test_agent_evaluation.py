@@ -202,6 +202,22 @@ def test_active_context_strategies_and_discovery_accounting() -> None:
     assert metrics["unique_files_inspected"] == 1 and metrics["repeated_file_reads"] == 1
 
 
+def test_fake_evaluator_executes_real_output_hook() -> None:
+    suite = replace(load_suite(SUITE), repetitions=1)
+    evaluation = asyncio.run(
+        CodexEvaluator(
+            suite,
+            context_strategy="post-replace",
+            allow_hook_trust_bypass=True,
+        ).run()
+    )
+    optimized = next(run for run in evaluation.tasks[0]["runs"] if run["mode"] == "optimized")
+    observation = optimized["hook_observation"]
+    assert observation["observation"] == "observed"
+    assert observation["compacted_events"] == 1
+    assert observation["original_result_bytes"] > observation["model_facing_result_bytes"]
+
+
 def test_timeout_cancellation_and_event_redaction() -> None:
     suite = replace(load_suite(SUITE), repetitions=1, timeout_seconds=1)
     original = __import__("os").environ.get("LLMCUT_FAKE_SCENARIO")
