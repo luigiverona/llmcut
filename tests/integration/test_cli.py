@@ -1,10 +1,15 @@
 import json
+import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
-from llmcut.cli import app
+from llmcut.cli import _run_user_source_probe, app
+from llmcut.integrations.codex.auth import AuthenticationStatus
 from llmcut.model import BlockKind, CanonicalRequest, ContextBlock, ModelConfiguration
 
 runner = CliRunner()
@@ -155,3 +160,52 @@ def test_eval_executes_and_fails_regressions(tmp_path: Path) -> None:
     )
     result = runner.invoke(app, ["eval", "--corpus", str(failing), "--repo", str(repo)])
     assert result.exit_code == 1 and json.loads(result.stdout)["passed"] is False
+
+
+def test_user_hook_management_cli_isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir(mode=0o700)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    result = runner.invoke(app, ["agent", "codex", "hooks", "user", "status", "--format", "json"])
+    assert result.exit_code == 0 and json.loads(result.stdout)["target_present"] is False
+    result = runner.invoke(
+        app,
+        ["agent", "codex", "hooks", "user", "install", "--dry-run", "--format", "json"],
+    )
+    assert result.exit_code == 0 and json.loads(result.stdout)["dry_run"] is True
+    assert not (codex_home / "hooks.json").exists()
+    result = runner.invoke(app, ["agent", "codex", "hooks", "user", "install"])
+    assert result.exit_code == 0 and (codex_home / "hooks.json").is_file()
+    result = runner.invoke(app, ["agent", "codex", "hooks", "user", "remove", "--format", "json"])
+    assert result.exit_code == 0 and json.loads(result.stdout)["changed"] is True
+    result = runner.invoke(
+        app, ["agent", "codex", "hooks", "user", "recover", "--dry-run", "--format", "json"]
+    )
+    assert result.exit_code == 0 and json.loads(result.stdout)["pending"] == []
+
+
+def test_user_source_probe_fake_runtime_reports_state_and_restores_hooks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable_dir = tmp_path / "bin"
+    executable_dir.mkdir()
+    fake = executable_dir / "codex"
+    shutil.copy(Path("tests/fixtures/agent/fake_codex_exec.py"), fake)
+    os.chmod(fake, 0o700)
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir(mode=0o700)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv(
+        "PATH", f"{executable_dir}:{Path(sys.executable).parent}:{os.environ['PATH']}"
+    )
+    monkeypatch.setattr(
+        "llmcut.integrations.codex.auth.authentication_preflight",
+        lambda **_kwargs: AuthenticationStatus(True, "chatgpt", "auto", "configured", True),
+    )
+    report = _run_user_source_probe(True, True)
+    assert isinstance(report["user_hooks_source_active"], bool)
+    assert report["authoritative_usage"] is True
+    assert report["cleanup_result"] == "complete"
+    assert not (codex_home / "hooks.json").exists()

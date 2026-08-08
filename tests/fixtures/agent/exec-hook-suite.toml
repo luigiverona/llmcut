@@ -14,6 +14,7 @@ sandbox = "workspace-write"
 approval_policy = "never"
 environment_allowlist = ["LLMCUT_FAKE_SCENARIO"]
 context_strategy = "post-replace"
+comparison_design = "hook-parity-baseline"
 require_hook_activation = true
 require_resolved_model_observation = false
 ignore_user_config = true

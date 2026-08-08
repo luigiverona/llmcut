@@ -157,7 +157,7 @@ class ExecBackend:
             command_events=True,
             file_change_events=True,
             resumable_turns=True,
-            resolved_model_observation=False,
+            resolved_model_observation=True,
         )
 
     async def cancel(self) -> None:

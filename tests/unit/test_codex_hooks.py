@@ -7,6 +7,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
@@ -17,12 +19,15 @@ from llmcut.integrations.codex.executor import (
     _hook_metrics,
     _hook_overrides,
     _hook_replacement_verified,
+    _resolved_settings_parity,
     _write_evaluation_hook,
 )
+from llmcut.integrations.codex.hooks.bridge import bridge_hook
 from llmcut.integrations.codex.hooks.classify import CommandClass, classify_command
 from llmcut.integrations.codex.hooks.compact import compact_bash_result
 from llmcut.integrations.codex.hooks.config import (
     HookConfig,
+    bridge_definition_digest,
     hook_command,
     inline_overrides,
     install_hooks,
@@ -32,8 +37,17 @@ from llmcut.integrations.codex.hooks.config import (
     remove_hooks,
 )
 from llmcut.integrations.codex.hooks.handler import append_metrics, handle_hook
+from llmcut.integrations.codex.hooks.lease import create_lease, load_lease, remove_lease
 from llmcut.integrations.codex.hooks.protocol import parse_bash_response, parse_hook_input
 from llmcut.integrations.codex.hooks.state import HookEvidenceStore, exact_lines, render_exact
+from llmcut.integrations.codex.hooks.user import (
+    install_user_bridge,
+    recover_user_bridges,
+    remove_user_bridge,
+    restore_user_bridge,
+    user_hook_status,
+    user_transaction_root,
+)
 
 
 def _event(repo: Path, output: str, *, code: int = 1, command: str = "pytest -q") -> bytes:
@@ -698,3 +712,381 @@ def test_hook_capability_is_surface_and_version_bound(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(subprocess, "run", unavailable)
     assert not _hook_replacement_verified("codex", "app-server")
+
+
+def test_user_bridge_lease_observe_compact_and_inactive(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    registry = tmp_path / "leases"
+    metrics = tmp_path / "metrics" / "events.jsonl"
+    state = tmp_path / "evidence"
+    assert bridge_hook(_event(repo, _pytest_output()), {}) is None
+    assert not metrics.exists() and not state.exists()
+
+    observe = create_lease(
+        registry,
+        mode="observe",
+        repository_root=repo,
+        repository_revision="revision",
+        evaluation_run_id="run-observe",
+        allowed_cwd=repo,
+        hook_definition_digest=bridge_definition_digest(),
+        state_root=state,
+        metrics_path=metrics,
+    )
+    assert bridge_hook(_event(repo, _pytest_output()), observe.environment()) is None
+    observed = json.loads(metrics.read_text().splitlines()[-1])
+    assert observed["bridge_mode"] == "observe"
+    assert observed["original_bytes"] > 12_000
+    assert not state.exists()
+    remove_lease(observe)
+
+    compact = create_lease(
+        registry,
+        mode="compact",
+        repository_root=repo,
+        repository_revision="revision",
+        evaluation_run_id="run-compact",
+        allowed_cwd=repo,
+        hook_definition_digest=bridge_definition_digest(),
+        state_root=state,
+        metrics_path=metrics,
+    )
+    response = bridge_hook(_event(repo, _pytest_output()), compact.environment())
+    assert response and response["decision"] == "block"
+    assert state.is_dir()
+    invalid = compact.environment() | {"LLMCUT_HOOK_LEASE_TOKEN": "wrong"}
+    assert bridge_hook(_event(repo, _pytest_output()), invalid) is None
+    assert bridge_hook(b"bad", compact.environment()) is None
+    subdirectory = repo / "subdirectory"
+    subdirectory.mkdir()
+    wrong_cwd = json.loads(_event(repo, _pytest_output()))
+    wrong_cwd["cwd"] = str(subdirectory)
+    assert bridge_hook(json.dumps(wrong_cwd).encode(), compact.environment()) is None
+    remove_lease(compact)
+
+
+def test_hook_lease_security_and_expiry(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    with pytest.raises(ValueError, match="escapes"):
+        create_lease(
+            tmp_path / "leases",
+            mode="observe",
+            repository_root=repo,
+            repository_revision="revision",
+            evaluation_run_id="run",
+            allowed_cwd=outside,
+            hook_definition_digest="digest",
+            state_root=tmp_path / "state",
+            metrics_path=tmp_path / "metrics.jsonl",
+        )
+    activation = create_lease(
+        tmp_path / "leases",
+        mode="observe",
+        repository_root=repo,
+        repository_revision="revision",
+        evaluation_run_id="run",
+        allowed_cwd=repo,
+        hook_definition_digest="digest",
+        state_root=tmp_path / "state",
+        metrics_path=tmp_path / "metrics.jsonl",
+        lifetime_seconds=1,
+    )
+    with pytest.raises(ValueError, match="expired"):
+        load_lease(
+            activation.registry,
+            activation.lease.lease_id,
+            activation.token,
+            "run",
+            now=activation.lease.expires_at + 1,
+        )
+    with pytest.raises(ValueError, match="run binding"):
+        load_lease(
+            activation.registry,
+            activation.lease.lease_id,
+            activation.token,
+            "other-run",
+        )
+
+
+def test_user_hook_transaction_restore_and_external_edit(tmp_path: Path) -> None:
+    target = tmp_path / "codex" / "hooks.json"
+    transactions = tmp_path / "transactions"
+    installed = install_user_bridge(target, transactions, lease_id="lease")
+    assert installed["changed"] is True
+    transaction_id = str(installed["transaction_id"])
+    assert user_hook_status(target, transactions)["bridge_configured"] is True
+    restored = restore_user_bridge(transactions, transaction_id)
+    assert restored["cleanup"] == "complete" and not target.exists()
+
+    target.parent.mkdir(exist_ok=True)
+    target.write_text(json.dumps({"hooks": {"Stop": [{"hooks": []}]}}) + "\n")
+    os.chmod(target, 0o600)
+    installed = install_user_bridge(target, transactions, lease_id="lease")
+    current = json.loads(target.read_text())
+    current["external"] = True
+    target.write_text(json.dumps(current) + "\n")
+    os.chmod(target, 0o600)
+    restored = restore_user_bridge(transactions, str(installed["transaction_id"]))
+    assert restored["cleanup"] == "surgical"
+    final = json.loads(target.read_text())
+    assert final["external"] is True and final["hooks"]["Stop"]
+    assert remove_user_bridge(target, transactions)["changed"] is False
+
+
+def test_user_hook_concurrent_transactions_restore_after_last_reference(tmp_path: Path) -> None:
+    target = tmp_path / "codex" / "hooks.json"
+    transactions = tmp_path / "transactions"
+    first = install_user_bridge(target, transactions, lease_id="first")
+    second = install_user_bridge(target, transactions, lease_id="second")
+    deferred = restore_user_bridge(transactions, str(first["transaction_id"]))
+    assert deferred["cleanup"] == "deferred"
+    assert target.is_file()
+    final = restore_user_bridge(transactions, str(second["transaction_id"]))
+    assert final["owner_cleanup"]["cleanup"] == "complete"
+    assert not target.exists()
+
+
+def test_user_hook_status_persistent_dry_run_recovery_and_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg"))
+    assert user_transaction_root() == tmp_path / "xdg" / "llmcut" / "codex-user-hooks"
+    target = tmp_path / "codex" / "hooks.json"
+    transactions = tmp_path / "transactions"
+    dry = install_user_bridge(target, transactions, lease_id="dry", dry_run=True)
+    assert dry["dry_run"] and not target.exists()
+    installed = install_user_bridge(target, transactions, lease_id="persistent", persistent=True)
+    assert installed["persistent"] and stat.S_IMODE(target.stat().st_mode) == 0o600
+    duplicate = install_user_bridge(target, transactions, lease_id="duplicate")
+    assert duplicate["changed"] is False
+    assert recover_user_bridges(transactions, dry_run=True)["pending"]
+    restored = recover_user_bridges(transactions)
+    assert restored["results"][0]["cleanup"] == "complete"
+    assert user_hook_status(target, transactions)["bridge_configured"]
+    assert remove_user_bridge(target, transactions, dry_run=True)["changed"]
+    assert remove_user_bridge(target, transactions)["changed"]
+    assert remove_user_bridge(tmp_path / "missing.json", transactions)["changed"] is False
+
+    target.write_text("[]")
+    os.chmod(target, 0o600)
+    with pytest.raises(ValueError, match="object"):
+        user_hook_status(target, transactions)
+    target.write_text("{}")
+    os.chmod(target, 0o644)
+    with pytest.raises(ValueError, match="restrictive"):
+        install_user_bridge(target, transactions, lease_id="unsafe")
+    link = tmp_path / "hooks-link.json"
+    link.symlink_to(target)
+    with pytest.raises(ValueError, match="absolute and not a symlink"):
+        install_user_bridge(link, transactions, lease_id="link")
+    with pytest.raises(ValueError, match="transaction root"):
+        install_user_bridge(tmp_path / "other.json", Path("relative"), lease_id="relative")
+
+
+def test_user_hook_malformed_shapes_backup_and_incomplete_recovery(tmp_path: Path) -> None:
+    target = tmp_path / "codex" / "hooks.json"
+    target.parent.mkdir()
+    transactions = tmp_path / "transactions"
+    for value, message in (
+        ({"hooks": []}, "hooks field"),
+        ({"hooks": {"PostToolUse": {}}}, "array"),
+    ):
+        target.write_text(json.dumps(value))
+        os.chmod(target, 0o600)
+        with pytest.raises(ValueError, match=message):
+            install_user_bridge(target, transactions, lease_id="bad")
+
+    original = b'{"unrelated":true}\n'
+    target.write_bytes(original)
+    os.chmod(target, 0o600)
+    installed = install_user_bridge(target, transactions, lease_id="backup")
+    restored = restore_user_bridge(transactions, str(installed["transaction_id"]))
+    assert restored["cleanup"] == "complete" and target.read_bytes() == original
+
+    installed = install_user_bridge(target, transactions, lease_id="ambiguous")
+    target.write_text("not json")
+    os.chmod(target, 0o600)
+    incomplete = restore_user_bridge(transactions, str(installed["transaction_id"]))
+    assert incomplete["cleanup"] == "incomplete"
+    with pytest.raises(ValueError, match="unavailable"):
+        restore_user_bridge(transactions, "missing")
+
+
+def test_hook_lease_security_rejections(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    def make(**overrides: Any) -> Any:
+        values = {
+            "mode": "compact",
+            "allowed_cwd": repo,
+            "state_root": tmp_path / "state",
+            "metrics_path": tmp_path / "metrics.jsonl",
+            **overrides,
+        }
+        return create_lease(
+            tmp_path / "leases",
+            mode=values["mode"],
+            repository_root=repo,
+            repository_revision="revision",
+            evaluation_run_id="run",
+            allowed_cwd=values["allowed_cwd"],
+            hook_definition_digest=bridge_definition_digest(),
+            state_root=values["state_root"],
+            metrics_path=values["metrics_path"],
+            lifetime_seconds=values.get("lifetime_seconds", 900),
+        )
+
+    with pytest.raises(ValueError, match="mode"):
+        make(mode="invalid")
+    with pytest.raises(ValueError, match="lifetime"):
+        make(lifetime_seconds=0)
+    with pytest.raises(ValueError, match="cwd escapes"):
+        make(allowed_cwd=outside)
+    with pytest.raises(ValueError, match="state"):
+        make(state_root=repo / "state")
+    with pytest.raises(ValueError, match="metrics"):
+        make(metrics_path=repo / "metrics.jsonl")
+    activation = make()
+    with pytest.raises(ValueError, match="invalid hook lease id"):
+        load_lease(activation.registry, "bad", activation.token, "run")
+    with pytest.raises(ValueError, match="unavailable"):
+        load_lease(activation.registry, "0" * 64, activation.token, "run")
+    lease_file = activation.registry / f"{activation.lease.lease_id}.json"
+    os.chmod(lease_file, 0o644)
+    with pytest.raises(ValueError, match="permissions"):
+        load_lease(activation.registry, activation.lease.lease_id, activation.token, "run")
+    os.chmod(lease_file, 0o600)
+    value = json.loads(lease_file.read_text())
+    value["schema_version"] = 99
+    lease_file.write_text(json.dumps(value))
+    os.chmod(lease_file, 0o600)
+    with pytest.raises(ValueError, match="binding"):
+        load_lease(activation.registry, activation.lease.lease_id, activation.token, "run")
+    remove_lease(activation)
+
+
+def test_hook_lease_rejects_symlink_and_unsafe_registry(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    with pytest.raises(ValueError, match="non-symlink"):
+        load_lease(link, "0" * 64, "token", "run")
+    unsafe = tmp_path / "unsafe"
+    unsafe.mkdir(mode=0o755)
+    with pytest.raises(ValueError, match="permissions"):
+        load_lease(unsafe, "0" * 64, "token", "run")
+    with pytest.raises(ValueError, match="symlink"):
+        create_lease(
+            tmp_path / "new-leases",
+            mode="observe",
+            repository_root=link,
+            repository_revision="revision",
+            evaluation_run_id="run",
+            allowed_cwd=real,
+            hook_definition_digest="digest",
+            state_root=tmp_path / "state",
+            metrics_path=tmp_path / "metrics.jsonl",
+        )
+    regular_file = tmp_path / "regular-file"
+    regular_file.write_text("not a directory")
+    with pytest.raises(ValueError, match="directory"):
+        create_lease(
+            tmp_path / "newer-leases",
+            mode="observe",
+            repository_root=regular_file,
+            repository_revision="revision",
+            evaluation_run_id="run",
+            allowed_cwd=real,
+            hook_definition_digest="digest",
+            state_root=tmp_path / "state",
+            metrics_path=tmp_path / "metrics.jsonl",
+        )
+
+
+def test_user_hook_removal_preserves_unrelated_malformed_groups(tmp_path: Path) -> None:
+    target = tmp_path / "codex" / "hooks.json"
+    target.parent.mkdir()
+    document = {
+        "hooks": {
+            "PostToolUse": [
+                "opaque",
+                {"matcher": "other"},
+                {
+                    "matcher": "mixed",
+                    "hooks": [
+                        "opaque-handler",
+                        {"type": "command", "command": "unrelated"},
+                    ],
+                },
+            ]
+        }
+    }
+    target.write_text(json.dumps(document))
+    os.chmod(target, 0o600)
+    transactions = tmp_path / "transactions"
+    install_user_bridge(target, transactions, lease_id="lease", persistent=True)
+    assert remove_user_bridge(target, transactions)["changed"]
+    cleaned = json.loads(target.read_text())
+    assert cleaned["hooks"]["PostToolUse"] == document["hooks"]["PostToolUse"]
+
+
+def test_user_hook_rejects_symlink_parent_and_corrupt_backup(tmp_path: Path) -> None:
+    real_home = tmp_path / "real-home"
+    real_home.mkdir()
+    linked_home = tmp_path / "linked-home"
+    linked_home.symlink_to(real_home, target_is_directory=True)
+    with pytest.raises(ValueError, match="Codex home"):
+        install_user_bridge(linked_home / "hooks.json", tmp_path / "transactions", lease_id="link")
+
+    target = real_home / "hooks.json"
+    target.write_text('{"original":true}\n')
+    os.chmod(target, 0o600)
+    installed = install_user_bridge(target, tmp_path / "transactions", lease_id="backup")
+    journal = tmp_path / "transactions" / f"{installed['transaction_id']}.json"
+    backup = Path(json.loads(journal.read_text())["backup_path"])
+    backup.write_text("corrupt")
+    os.chmod(backup, 0o600)
+    with pytest.raises(ValueError, match="digest mismatch"):
+        restore_user_bridge(tmp_path / "transactions", str(installed["transaction_id"]))
+
+
+def test_resolved_settings_parity_rejects_malformed_and_mismatched_values() -> None:
+    requested = {
+        "model": "model",
+        "reasoning_effort": "low",
+        "sandbox": "workspace-write",
+        "approval_policy": "never",
+        "observed_settings": {
+            "model": "model",
+            "reasoning": "low",
+            "sandbox": "workspace-write",
+            "approval_policy": "never",
+        },
+    }
+    left = SimpleNamespace(requested_settings=requested, resolved_model_observation="model")
+    right = SimpleNamespace(requested_settings=requested, resolved_model_observation="model")
+    assert _resolved_settings_parity(left, right)  # type: ignore[arg-type]
+    malformed = SimpleNamespace(
+        requested_settings={"observed_settings": "bad"}, resolved_model_observation="model"
+    )
+    assert not _resolved_settings_parity(left, malformed)  # type: ignore[arg-type]
+    wrong_requested = SimpleNamespace(
+        requested_settings=requested | {"model": "other"}, resolved_model_observation="model"
+    )
+    assert not _resolved_settings_parity(left, wrong_requested)  # type: ignore[arg-type]
+    wrong_observation = dict(requested["observed_settings"])  # type: ignore[arg-type]
+    wrong_observation["model"] = "other"
+    wrong_observed = SimpleNamespace(
+        requested_settings=requested | {"observed_settings": wrong_observation},
+        resolved_model_observation="other",
+    )
+    assert not _resolved_settings_parity(left, wrong_observed)  # type: ignore[arg-type]

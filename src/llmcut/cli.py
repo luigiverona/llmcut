@@ -40,6 +40,7 @@ context_app = typer.Typer(help="Plan trusted repository orientation for coding a
 agent_app = typer.Typer(help="Evaluate supported coding-agent integrations.")
 codex_app = typer.Typer(help="Inspect and configure the experimental Codex integration.")
 codex_hooks_app = typer.Typer(help="Inspect and configure Codex lifecycle hooks.")
+codex_user_hooks_app = typer.Typer(help="Manage the inert user-level Codex hook bridge.")
 codex_exec_app = typer.Typer(help="Probe the structured codex exec evaluation surface.")
 hook_app = typer.Typer(help="Handle hooks and recover exact compacted tool output.")
 app.add_typer(checkpoint_app, name="checkpoint")
@@ -52,6 +53,7 @@ app.add_typer(agent_app, name="agent")
 app.add_typer(hook_app, name="hook")
 agent_app.add_typer(codex_app, name="codex")
 codex_app.add_typer(codex_hooks_app, name="hooks")
+codex_hooks_app.add_typer(codex_user_hooks_app, name="user")
 codex_app.add_typer(codex_exec_app, name="exec")
 
 
@@ -70,6 +72,11 @@ def _hook_state_root() -> Path:
 
 def _hook_config_path() -> Path:
     return Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "hooks.json"
+
+
+def _user_hook_transaction_root() -> Path:
+    base = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+    return (base / "llmcut" / "codex-user-hooks").resolve()
 
 
 @app.callback()
@@ -968,6 +975,71 @@ def codex_hooks_config() -> None:
     )
 
 
+@codex_user_hooks_app.command("status")
+def codex_user_hooks_status(
+    output_format: Annotated[str, typer.Option("--format")] = "text",
+) -> None:
+    from llmcut.integrations.codex.hooks.user import user_hook_status
+
+    report = user_hook_status(_hook_config_path(), _user_hook_transaction_root())
+    typer.echo(
+        json.dumps(report, indent=2)
+        if output_format == "json"
+        else "\n".join(f"{key}: {value}" for key, value in report.items())
+    )
+
+
+@codex_user_hooks_app.command("install")
+def codex_user_hooks_install(
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    output_format: Annotated[str, typer.Option("--format")] = "text",
+) -> None:
+    from llmcut.integrations.codex.hooks.user import install_user_bridge
+
+    report = install_user_bridge(
+        _hook_config_path(),
+        _user_hook_transaction_root(),
+        lease_id="persistent-install",
+        dry_run=dry_run,
+        persistent=True,
+    )
+    typer.echo(
+        json.dumps(report, indent=2)
+        if output_format == "json"
+        else "\n".join(f"{key}: {value}" for key, value in report.items())
+    )
+
+
+@codex_user_hooks_app.command("remove")
+def codex_user_hooks_remove(
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    output_format: Annotated[str, typer.Option("--format")] = "text",
+) -> None:
+    from llmcut.integrations.codex.hooks.user import remove_user_bridge
+
+    report = remove_user_bridge(_hook_config_path(), _user_hook_transaction_root(), dry_run=dry_run)
+    typer.echo(
+        json.dumps(report, indent=2)
+        if output_format == "json"
+        else "\n".join(f"{key}: {value}" for key, value in report.items())
+    )
+
+
+@codex_user_hooks_app.command("recover")
+def codex_user_hooks_recover(
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    output_format: Annotated[str, typer.Option("--format")] = "text",
+) -> None:
+    from llmcut.integrations.codex.hooks.user import recover_user_bridges
+
+    report = recover_user_bridges(_user_hook_transaction_root(), dry_run=dry_run)
+    typer.echo(
+        json.dumps(report, indent=2)
+        if output_format == "json"
+        else "\n".join(f"{key}: {value}" for key, value in report.items())
+    )
+
+
 @codex_hooks_app.command("install")
 def codex_hooks_install(
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
@@ -1019,15 +1091,17 @@ def codex_hooks_probe(
     post_tool_use: Annotated[bool, typer.Option("--post-tool-use")] = False,
     pre_tool_use: Annotated[bool, typer.Option("--pre-tool-use")] = False,
     activation: Annotated[bool, typer.Option("--activation")] = False,
+    user_source: Annotated[bool, typer.Option("--user-source")] = False,
     output_format: Annotated[str, typer.Option("--format")] = "text",
     output: Annotated[Path | None, typer.Option("--output")] = None,
     allow_hook_trust_bypass: Annotated[bool, typer.Option("--allow-hook-trust-bypass")] = False,
+    allow_user_hook_lease: Annotated[bool, typer.Option("--allow-user-hook-lease")] = False,
     variant: Annotated[str | None, typer.Option("--variant", hidden=True)] = None,
 ) -> None:
     """Run an explicit, version-bound hook conformance probe."""
     from llmcut.integrations.codex.hooks.conformance import PostVariant, run_live_post_matrix
 
-    if sum((post_tool_use, pre_tool_use, activation)) != 1:
+    if sum((post_tool_use, pre_tool_use, activation, user_source)) != 1:
         raise typer.BadParameter("select exactly one conformance probe")
     if not allow_hook_trust_bypass:
         raise typer.BadParameter("--allow-hook-trust-bypass is required for automation")
@@ -1037,6 +1111,21 @@ def codex_hooks_probe(
         )
     if activation:
         codex_exec_probe(output_format, output, allow_hook_trust_bypass)
+        return
+    if user_source:
+        report = _run_user_source_probe(allow_hook_trust_bypass, allow_user_hook_lease)
+        rendered = (
+            json.dumps(report, indent=2)
+            if output_format == "json"
+            else "\n".join(f"{key}: {value}" for key, value in report.items())
+        )
+        if output is not None:
+            target = output.resolve()
+            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            target.write_text(rendered + "\n")
+            os.chmod(target, 0o600)
+        else:
+            typer.echo(rendered)
         return
     if output_format not in {"text", "json"}:
         raise typer.BadParameter("format must be text or json")
@@ -1059,6 +1148,130 @@ def codex_hooks_probe(
         typer.echo(rendered)
 
 
+def _run_user_source_probe(
+    allow_hook_trust_bypass: bool, allow_user_hook_lease: bool
+) -> dict[str, Any]:
+    import asyncio
+    import shutil
+    import subprocess
+    import tempfile
+
+    from llmcut.integrations.codex.auth import authentication_preflight
+    from llmcut.integrations.codex.backend import codex_agent_environment, create_backend
+    from llmcut.integrations.codex.hooks.config import (
+        bridge_definition_digest,
+        project_hook_overrides,
+    )
+    from llmcut.integrations.codex.hooks.lease import create_lease, remove_lease
+    from llmcut.integrations.codex.hooks.user import (
+        install_user_bridge,
+        restore_user_bridge,
+        user_transaction_root,
+    )
+
+    if not allow_hook_trust_bypass:
+        raise typer.BadParameter("--allow-hook-trust-bypass is required for automation")
+    if not allow_user_hook_lease:
+        raise typer.BadParameter("--allow-user-hook-lease is required for automation")
+    authentication = authentication_preflight(mode="existing-session")
+    if not authentication.automation_ready:
+        raise typer.BadParameter(authentication.diagnostic or "Codex authentication unavailable")
+    root = Path(tempfile.mkdtemp(prefix="llmcut-user-source-probe-"))
+    os.chmod(root, 0o700)
+    transaction_root = user_transaction_root()
+    state = root.parent / f".{root.name}-evidence"
+    metrics = root.parent / f".{root.name}-metrics.jsonl"
+    activation = None
+    transaction_id = None
+    cleanup_result = "not_required"
+    report: dict[str, Any]
+    try:
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "probe@llmcut.invalid"], cwd=root, check=True
+        )
+        subprocess.run(["git", "config", "user.name", "llmcut probe"], cwd=root, check=True)
+        (root / "test_probe.py").write_text(
+            "import pytest\n\n@pytest.mark.parametrize('value', range(240))\n"
+            "def test_value(value):\n    assert value >= 0\n"
+        )
+        subprocess.run(["git", "add", "test_probe.py"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-qm", "probe"], cwd=root, check=True)
+        codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+        installed = install_user_bridge(
+            codex_home / "hooks.json", transaction_root, lease_id=root.name
+        )
+        transaction_id = str(installed["transaction_id"])
+        activation = create_lease(
+            root.parent / f".{root.name}-leases",
+            mode="compact",
+            repository_root=root,
+            repository_revision=subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True, check=True
+            ).stdout.strip(),
+            evaluation_run_id=root.name,
+            allowed_cwd=root,
+            hook_definition_digest=bridge_definition_digest(),
+            state_root=state,
+            metrics_path=metrics,
+            lifetime_seconds=300,
+        )
+        environment = codex_agent_environment((), "probe", "existing-session", None)
+        environment.update(activation.environment())
+        backend = create_backend("exec", allow_hook_trust_bypass=True)
+        capabilities = asyncio.run(backend.doctor())
+        result = asyncio.run(
+            backend.run(
+                task="Use Bash once to run `python -m pytest -vv`. Do not edit files.",
+                cwd=root,
+                model="gpt-5.6-terra",
+                reasoning="low",
+                sandbox="workspace-write",
+                approval_policy="never",
+                timeout=180,
+                max_turns=1,
+                environment=environment,
+                config_overrides=project_hook_overrides(),
+                validation_callback=None,
+                cancellation=None,
+            )
+        )
+        events = (
+            [json.loads(line) for line in metrics.read_text().splitlines()]
+            if metrics.is_file()
+            else []
+        )
+        command_events = [item for item in result.events if item.kind == "command_execution"]
+        report = {
+            "runtime": capabilities.runtime_version,
+            "codex_home_detected": True,
+            "user_hooks_source_active": bool(events),
+            "ignore_user_config": True,
+            "hooks_feature": True,
+            "trust_bypass": True,
+            "bridge_definition_digest": bridge_definition_digest(),
+            "lease_activation": bool(events),
+            "codex_command_events": len(command_events),
+            "compacted_events": sum(item.get("applied") is True for item in events),
+            "exclusive_replacement": bool(events) and capabilities.exclusive_post_tool_replacement,
+            "terminal_state": result.status,
+            "authoritative_usage": bool(result.usage),
+            "hook_process_error_observed": bool(result.stderr),
+            "activation_state": "observed" if events else "hook_observation_missing",
+        }
+    finally:
+        if activation is not None:
+            remove_lease(activation)
+        if transaction_id is not None:
+            cleanup = restore_user_bridge(transaction_root, transaction_id)
+            cleanup_result = str(cleanup["cleanup"])
+        shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(state, ignore_errors=True)
+        metrics.unlink(missing_ok=True)
+    report["cleanup_result"] = cleanup_result
+    return report
+
+
 @hook_app.command("handle")
 def hook_handle() -> None:
     """Handle one bounded Codex hook event from stdin; malformed input passes through."""
@@ -1072,6 +1285,17 @@ def hook_handle() -> None:
     if metrics_path:
         with contextlib.suppress(OSError):
             append_metrics(Path(metrics_path), metrics)
+    if response is not None:
+        typer.echo(json.dumps(response, separators=(",", ":")))
+
+
+@hook_app.command("bridge")
+def hook_bridge() -> None:
+    """Run the inert user-level bridge; only a protected lease can activate it."""
+    from llmcut.integrations.codex.hooks.bridge import bridge_hook
+    from llmcut.integrations.codex.hooks.config import MAX_HOOK_INPUT
+
+    response = bridge_hook(sys.stdin.buffer.read(MAX_HOOK_INPUT + 1))
     if response is not None:
         typer.echo(json.dumps(response, separators=(",", ":")))
 
@@ -1228,6 +1452,7 @@ def agent_evaluate(
     context_strategy: Annotated[str | None, typer.Option("--context-strategy")] = None,
     pilot: Annotated[bool, typer.Option("--pilot")] = False,
     allow_hook_trust_bypass: Annotated[bool, typer.Option("--allow-hook-trust-bypass")] = False,
+    allow_user_hook_lease: Annotated[bool, typer.Option("--allow-user-hook-lease")] = False,
 ) -> None:
     import asyncio
     import tempfile
@@ -1254,6 +1479,7 @@ def agent_evaluate(
         context_strategy=context_strategy,
         pilot=pilot,
         allow_hook_trust_bypass=allow_hook_trust_bypass,
+        allow_user_hook_lease=allow_user_hook_lease,
     )
     try:
         evaluation = evaluator.plan() if dry_run else asyncio.run(evaluator.run())

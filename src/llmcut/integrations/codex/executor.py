@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import os
 import random
@@ -173,6 +172,7 @@ class CodexEvaluator:
         context_strategy: str | None = None,
         pilot: bool = False,
         allow_hook_trust_bypass: bool = False,
+        allow_user_hook_lease: bool = False,
     ) -> None:
         self.suite = suite
         self.repetitions = repetitions or suite.repetitions
@@ -193,6 +193,8 @@ class CodexEvaluator:
         )
         self.pilot = pilot
         self.allow_hook_trust_bypass = allow_hook_trust_bypass
+        self.allow_user_hook_lease = allow_user_hook_lease
+        self._evaluation_run_id = uuid.uuid4().hex
         self._backend: CodexBackend = create_backend(
             self.backend_name,
             suite.executable,
@@ -275,6 +277,10 @@ class CodexEvaluator:
             raise RuntimeError(
                 "automated hook evaluation requires explicit --allow-hook-trust-bypass"
             )
+        if self.suite.execution.require_hook_activation and not self.allow_user_hook_lease:
+            raise RuntimeError(
+                "automated hook evaluation requires explicit --allow-user-hook-lease"
+            )
         if self.backend_name == "exec" and (
             not self.suite.execution.ignore_user_config or not self.suite.execution.ignore_rules
         ):
@@ -288,7 +294,21 @@ class CodexEvaluator:
         registered: list[tuple[Path, Path]] = []
         results: list[AgentRunResult] = []
         order = self._order()
+        user_hook_transaction: str | None = None
         try:
+            if self.suite.execution.require_hook_activation:
+                from llmcut.integrations.codex.hooks.user import (
+                    install_user_bridge,
+                    user_transaction_root,
+                )
+
+                codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+                installed = install_user_bridge(
+                    codex_home / "hooks.json",
+                    user_transaction_root(),
+                    lease_id=self._evaluation_run_id,
+                )
+                user_hook_transaction = installed.get("transaction_id")
             seeds = {
                 task.id: _prepare_seed(root / task.id / "seed", task) for task in self.suite.tasks
             }
@@ -352,6 +372,18 @@ class CodexEvaluator:
                 self.pilot,
             )
         finally:
+            if user_hook_transaction is not None:
+                from llmcut.integrations.codex.hooks.user import (
+                    restore_user_bridge,
+                    user_transaction_root,
+                )
+
+                cleanup = restore_user_bridge(user_transaction_root(), user_hook_transaction)
+                if cleanup["cleanup"] == "incomplete":
+                    raise RuntimeError(
+                        "user hook cleanup is incomplete; run "
+                        "`llmcut agent codex hooks user recover`"
+                    )
             if not self.keep_worktrees:
                 _cleanup(root, registered)
 
@@ -415,8 +447,12 @@ class CodexEvaluator:
         hook_overrides: tuple[str, ...] = ()
         hook_state: Path | None = None
         hook_metrics: Path | None = None
-        hook_config: Path | None = None
-        if plan.selected_strategy.intervention.output_compaction:
+        hook_activation = None
+        observe_hook = (
+            self.suite.execution.comparison_design == "hook-parity-baseline" and mode == "baseline"
+        )
+        hook_enabled = plan.selected_strategy.intervention.output_compaction or observe_hook
+        if hook_enabled:
             if not _hook_replacement_verified(self.suite.executable, self.backend_name):
                 raise RuntimeError(
                     "hook output compaction is release-blocked: exclusive model-facing replacement "
@@ -429,14 +465,44 @@ class CodexEvaluator:
                 )
             hook_state = worktree.parent / ".hook-evidence"
             hook_metrics = worktree.parent / ".hook-metrics.jsonl"
-            hook_config = _write_evaluation_hook(worktree)
             hook_overrides = _hook_overrides()
+            from llmcut.integrations.codex.hooks.config import bridge_definition_digest
+            from llmcut.integrations.codex.hooks.lease import create_lease
+
+            hook_run_id = f"{self._evaluation_run_id}:{task.id}:{repetition}:{mode}"
+            hook_activation = create_lease(
+                worktree.parent / ".hook-leases",
+                mode="observe" if observe_hook else "compact",
+                repository_root=worktree,
+                repository_revision=commit,
+                evaluation_run_id=hook_run_id,
+                allowed_cwd=worktree,
+                hook_definition_digest=bridge_definition_digest(),
+                state_root=hook_state,
+                metrics_path=hook_metrics,
+                lifetime_seconds=min(3600, max(60, int(self.timeout))),
+            )
         started = time.monotonic()
         run: CodexRun | None = None
+        otel_receiver = None
+        otel_environment = None
+        otel_config: tuple[str, ...] = ()
         error = None
         timed_out = False
         cancelled = False
         try:
+            if self.suite.execution.require_resolved_model_observation:
+                from llmcut.integrations.codex.otel import LocalOtelReceiver, otel_overrides
+
+                otel_environment = (
+                    "llmcut-"
+                    + digest_bytes(
+                        f"{self._evaluation_run_id}:{task.id}:{repetition}:{mode}".encode()
+                    ).removeprefix("sha256:")[:24]
+                )
+                otel_receiver = LocalOtelReceiver()
+                otel_receiver.__enter__()
+                otel_config = otel_overrides(otel_receiver.endpoint, otel_environment)
             agent_environment = codex_agent_environment(
                 self.suite.execution.environment_allowlist,
                 mode,
@@ -445,16 +511,15 @@ class CodexEvaluator:
             )
             agent_environment["LLMCUT_CONTEXT_STRATEGY"] = plan.selected_strategy.value
             if hook_state is not None and hook_metrics is not None:
-                from llmcut.integrations.codex.hooks.config import definition_digest
+                from llmcut.integrations.codex.hooks.config import bridge_definition_digest
 
                 agent_environment.update(
                     {
-                        "LLMCUT_HOOK_REPO": str(worktree),
-                        "LLMCUT_HOOK_STATE": str(hook_state),
-                        "LLMCUT_HOOK_METRICS": str(hook_metrics),
-                        "LLMCUT_HOOK_DEFINITION_DIGEST": definition_digest(),
+                        "LLMCUT_HOOK_DEFINITION_DIGEST": bridge_definition_digest(),
                     }
                 )
+                if hook_activation is not None:
+                    agent_environment.update(hook_activation.environment())
             run = await self._backend.run(
                 task=prompt,
                 cwd=worktree,
@@ -465,7 +530,9 @@ class CodexEvaluator:
                 timeout=self.timeout,
                 max_turns=task.max_turns,
                 environment=agent_environment,
-                config_overrides=developer_overrides + mcp_overrides + hook_overrides,
+                config_overrides=(
+                    developer_overrides + mcp_overrides + hook_overrides + otel_config
+                ),
                 validation_callback=validate,
                 cancellation=cancellation,
             )
@@ -476,12 +543,14 @@ class CodexEvaluator:
         except Exception as exc:
             error = _safe_error(exc)
         finally:
+            if otel_receiver is not None:
+                otel_receiver.__exit__(None, None, None)
             if state_path is not None:
                 state_path.unlink(missing_ok=True)
-            if hook_config is not None:
-                hook_config.unlink(missing_ok=True)
-                with contextlib.suppress(OSError):
-                    hook_config.parent.rmdir()
+            if hook_activation is not None:
+                from llmcut.integrations.codex.hooks.lease import remove_lease
+
+                remove_lease(hook_activation)
         if not validations:
             validations.extend(
                 _validate(
@@ -503,11 +572,11 @@ class CodexEvaluator:
         mcp_payload = sum(int(item["data"].get("result_bytes", 0)) // 3 for item in mcp_events)
         hook_observation = _hook_metrics(hook_metrics)
         hook_observation.update(_reconcile_hooks(events, hook_observation))
-        if plan.selected_strategy.intervention.output_compaction:
-            from llmcut.integrations.codex.hooks.config import definition_digest
+        if hook_enabled:
+            from llmcut.integrations.codex.hooks.config import bridge_definition_digest
 
             definition_valid = hook_observation.get("hook_definition_digests") == [
-                definition_digest()
+                bridge_definition_digest()
             ]
             commands_observed = int(hook_observation.get("codex_completed_commands", 0))
             hooks_observed = int(hook_observation.get("hook_events", 0))
@@ -516,8 +585,6 @@ class CodexEvaluator:
                 if hooks_observed
                 else "no_eligible_commands"
                 if not commands_observed
-                else "project_layer_untrusted"
-                if hook_config is not None
                 else "hook_observation_missing"
             )
             hook_observation["validity"] = (
@@ -530,6 +597,14 @@ class CodexEvaluator:
             hook_observation["activation"] = "disabled"
             hook_observation["validity"] = "valid"
         _cleanup_hook_artifacts(hook_state, hook_metrics, worktree.parent)
+        model_observation = (
+            otel_receiver.conversation_start(otel_environment)
+            if otel_receiver is not None and otel_environment is not None
+            else None
+        )
+        observed_settings = model_observation.to_dict() if model_observation else {}
+        if self.suite.execution.require_resolved_model_observation and model_observation is None:
+            error = error or "resolved model unavailable from local telemetry"
         return AgentRunResult(
             task.id,
             repetition,
@@ -539,7 +614,7 @@ class CodexEvaluator:
             manifest,
             settings_digest,
             parity_digest,
-            run.status if run else "failed",
+            "failed" if error else run.status if run else "failed",
             duration,
             validations,
             all(item.exit_code == 0 for item in validations[-len(task.validation) :]),
@@ -586,8 +661,12 @@ class CodexEvaluator:
             asdict(plan.adaptive_decision),
             _discovery_metrics(events),
             hook_observation,
-            settings | (run.backend_metadata if run else {}),
-            "unavailable",
+            settings
+            | {"observed_settings": observed_settings}
+            | (run.backend_metadata if run else {}),
+            model_observation.model
+            if model_observation and model_observation.model
+            else "unavailable",
         )
 
     def _authentication_status(self) -> AuthenticationStatus:
@@ -661,7 +740,13 @@ class CodexEvaluator:
             ),
             "hook_trust_bypass": bool(
                 self.allow_hook_trust_bypass
-                and self._context_strategy(task, mode).intervention.output_compaction
+                and (
+                    self._context_strategy(task, mode).intervention.output_compaction
+                    or (
+                        self.suite.execution.comparison_design == "hook-parity-baseline"
+                        and mode == "baseline"
+                    )
+                )
             ),
             "ignore_user_config": self.suite.execution.ignore_user_config,
             "ignore_rules": self.suite.execution.ignore_rules,
@@ -928,6 +1013,29 @@ def _run(argv: list[str], cwd: Path, *, check: bool = True) -> subprocess.Comple
     return result
 
 
+def _resolved_settings_parity(baseline: AgentRunResult, optimized: AgentRunResult) -> bool:
+    baseline_observed = baseline.requested_settings.get("observed_settings", {})
+    optimized_observed = optimized.requested_settings.get("observed_settings", {})
+    if not isinstance(baseline_observed, dict) or not isinstance(optimized_observed, dict):
+        return False
+    requested_keys = {
+        "model": "model",
+        "reasoning": "reasoning_effort",
+        "sandbox": "sandbox",
+        "approval_policy": "approval_policy",
+    }
+    for observed_key, requested_key in requested_keys.items():
+        left = baseline_observed.get(observed_key)
+        right = optimized_observed.get(observed_key)
+        if left is None or right is None or left != right:
+            return False
+        if left != baseline.requested_settings.get(requested_key):
+            return False
+        if right != optimized.requested_settings.get(requested_key):
+            return False
+    return baseline.resolved_model_observation == optimized.resolved_model_observation
+
+
 def _task_reports(
     tasks: tuple[AgentTask, ...], results: list[AgentRunResult]
 ) -> list[dict[str, Any]]:
@@ -966,8 +1074,19 @@ def _task_reports(
                 )
                 continue
             settings_parity = baseline.parity_digest == optimized.parity_digest
+            telemetry_required = any(
+                item.resolved_model_observation != "unavailable"
+                or bool(item.requested_settings.get("observed_settings"))
+                for item in (baseline, optimized)
+            )
+            resolved_parity = _resolved_settings_parity(baseline, optimized)
             quality_parity = baseline.quality_passed == optimized.quality_passed
-            eligible = settings_parity and baseline.quality_passed and optimized.quality_passed
+            eligible = (
+                settings_parity
+                and (resolved_parity or not telemetry_required)
+                and baseline.quality_passed
+                and optimized.quality_passed
+            )
             payload_reduction = (
                 (baseline.payload_estimate - optimized.payload_estimate)
                 / baseline.payload_estimate
@@ -982,6 +1101,9 @@ def _task_reports(
                     "repetition": repetition,
                     "eligible": eligible,
                     "settings_parity": settings_parity,
+                    "resolved_settings_parity": resolved_parity
+                    if telemetry_required
+                    else "unavailable",
                     "core_execution_parity": "passed" if settings_parity else "failed",
                     "user_task_parity": baseline.user_task_payload == optimized.user_task_payload,
                     "repository_parity": (
@@ -1007,7 +1129,7 @@ def _task_reports(
                     - baseline.correction_turns,
                     "exclusion_reason": None
                     if eligible
-                    else "settings mismatch or deterministic quality failure",
+                    else "settings/model mismatch or deterministic quality failure",
                 }
             )
         reports.append(

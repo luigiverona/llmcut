@@ -5,6 +5,7 @@ import json
 import shutil
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
@@ -16,6 +17,7 @@ from llmcut.integrations.codex.executor import CodexEvaluator, _discovery_metric
 from llmcut.integrations.codex.suite import load_suite
 
 SUITE = Path("tests/fixtures/agent/suite.toml").resolve()
+EXEC_HOOK_SUITE = Path("tests/fixtures/agent/exec-hook-suite.toml").resolve()
 runner = CliRunner()
 
 
@@ -202,13 +204,18 @@ def test_active_context_strategies_and_discovery_accounting() -> None:
     assert metrics["unique_files_inspected"] == 1 and metrics["repeated_file_reads"] == 1
 
 
-def test_fake_evaluator_executes_real_output_hook() -> None:
-    suite = replace(load_suite(SUITE), repetitions=1)
+def test_fake_evaluator_executes_real_output_hook(tmp_path: Path, monkeypatch: Any) -> None:
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir(mode=0o700)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    suite = replace(load_suite(EXEC_HOOK_SUITE), repetitions=1)
     evaluation = asyncio.run(
         CodexEvaluator(
             suite,
             context_strategy="post-replace",
             allow_hook_trust_bypass=True,
+            allow_user_hook_lease=True,
         ).run()
     )
     optimized = next(run for run in evaluation.tasks[0]["runs"] if run["mode"] == "optimized")

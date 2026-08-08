@@ -30,6 +30,7 @@ def test_fake_exec_evaluator_runs_real_hook_and_reconciles(tmp_path: Path) -> No
             "--suite",
             str(SUITE),
             "--allow-hook-trust-bypass",
+            "--allow-user-hook-lease",
             "--format",
             "json",
             "--output",
@@ -43,8 +44,9 @@ def test_fake_exec_evaluator_runs_real_hook_and_reconciles(tmp_path: Path) -> No
     runs = report["tasks"][0]["runs"]
     baseline = next(item for item in runs if item["mode"] == "baseline")
     optimized = next(item for item in runs if item["mode"] == "optimized")
-    assert baseline["hook_observation"]["activation"] == "disabled"
-    assert baseline["hook_observation"]["hook_events"] == 0
+    assert baseline["hook_observation"]["activation"] == "observed"
+    assert baseline["hook_observation"]["hook_events"] == 1
+    assert baseline["hook_observation"]["compacted_events"] == 0
     hook = optimized["hook_observation"]
     assert hook["activation"] == "observed"
     assert hook["validity"] == "valid"
@@ -75,25 +77,58 @@ def test_exec_suite_requires_explicit_trust_bypass() -> None:
     assert result.exit_code == 3
     assert "explicit --allow-hook-trust-bypass" in result.output
 
+    result = CliRunner().invoke(
+        app,
+        [
+            "agent",
+            "eval",
+            "--agent",
+            "codex",
+            "--backend",
+            "exec",
+            "--suite",
+            str(SUITE),
+            "--allow-hook-trust-bypass",
+        ],
+    )
+    assert result.exit_code == 3
+    assert "explicit --allow-user-hook-lease" in result.output
 
-def test_exec_suite_rejects_unobservable_model_and_inherited_config() -> None:
+
+def test_exec_suite_observes_model_and_rejects_inherited_config(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir(mode=0o700)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     suite = load_suite(SUITE)
     require_model = replace(
         suite,
         execution=replace(suite.execution, require_resolved_model_observation=True),
     )
-    try:
-        asyncio.run(CodexEvaluator(require_model, allow_hook_trust_bypass=True).run())
-    except RuntimeError as exc:
-        assert "resolved-model observation" in str(exc)
-    else:
-        raise AssertionError("unobservable resolved model was accepted")
+    observed = asyncio.run(
+        CodexEvaluator(
+            require_model,
+            allow_hook_trust_bypass=True,
+            allow_user_hook_lease=True,
+        ).run()
+    )
+    assert all(
+        run["resolved_model_observation"] == "fake-codex-model" for run in observed.tasks[0]["runs"]
+    )
     inherited = replace(
         suite,
         execution=replace(suite.execution, ignore_user_config=False),
     )
     try:
-        asyncio.run(CodexEvaluator(inherited, allow_hook_trust_bypass=True).run())
+        asyncio.run(
+            CodexEvaluator(
+                inherited,
+                allow_hook_trust_bypass=True,
+                allow_user_hook_lease=True,
+            ).run()
+        )
     except RuntimeError as exc:
         assert "ignore_user_config=true" in str(exc)
     else:

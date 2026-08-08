@@ -74,6 +74,41 @@ def hook_command() -> str:
     return f'"{executable}" -m llmcut hook handle'
 
 
+def bridge_command() -> str:
+    invoked = Path(sys.argv[0])
+    installed = str(invoked.resolve()) if invoked.name == "llmcut" and invoked.is_file() else None
+    installed = installed or shutil.which("llmcut")
+    if installed:
+        return f'"{Path(installed).resolve()}" hook bridge'
+    return f'"{Path(sys.executable).resolve()}" -m llmcut hook bridge'
+
+
+def bridge_document() -> dict[str, Any]:
+    return {
+        "description": "llmcut inert user-level hook bridge",
+        "hooks": {
+            "PostToolUse": [
+                {
+                    "matcher": "^Bash$",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": bridge_command(),
+                            "timeout": 15,
+                            "statusMessage": "Checking llmcut run lease",
+                        }
+                    ],
+                }
+            ]
+        },
+    }
+
+
+def bridge_definition_digest() -> str:
+    payload = json.dumps(bridge_document(), sort_keys=True, separators=(",", ":"))
+    return digest_bytes(payload.encode())
+
+
 def proposed_document() -> dict[str, Any]:
     return {
         "description": "llmcut exact recoverable Bash output compaction",

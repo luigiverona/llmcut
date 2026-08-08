@@ -15,7 +15,12 @@ SANDBOXES = {"read-only", "workspace-write", "danger-full-access"}
 APPROVALS = {"never", "on-request", "untrusted"}
 BACKENDS = {"sdk", "app-server", "exec", "fake"}
 AUTH_MODES = {"existing-session", "api-key", "access-token", "none"}
-COMPARISON_DESIGNS = {"standard-baseline", "tool-parity-baseline", "synthetic-full-context"}
+COMPARISON_DESIGNS = {
+    "standard-baseline",
+    "tool-parity-baseline",
+    "hook-parity-baseline",
+    "synthetic-full-context",
+}
 REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
