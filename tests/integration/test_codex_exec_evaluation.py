@@ -15,7 +15,13 @@ from llmcut.integrations.codex.suite import load_suite
 SUITE = Path(__file__).parents[1] / "fixtures" / "agent" / "exec-hook-suite.toml"
 
 
-def test_fake_exec_evaluator_runs_real_hook_and_reconciles(tmp_path: Path) -> None:
+def test_fake_exec_evaluator_runs_real_hook_and_reconciles(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir(mode=0o700)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     output = tmp_path / "report.json"
     capture = tmp_path / "capture"
     result = CliRunner().invoke(
