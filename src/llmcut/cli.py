@@ -695,6 +695,7 @@ def codex_exec_probe(
     output_format: Annotated[str, typer.Option("--format")] = "text",
     output: Annotated[Path | None, typer.Option("--output")] = None,
     allow_hook_trust_bypass: Annotated[bool, typer.Option("--allow-hook-trust-bypass")] = False,
+    hook_source: Annotated[str, typer.Option("--hook-source", hidden=True)] = "trusted-project",
 ) -> None:
     """Run one bounded authenticated JSONL/hook contract probe in a disposable Git fixture."""
     import asyncio
@@ -708,6 +709,8 @@ def codex_exec_probe(
     from llmcut.integrations.codex.hooks.config import (
         definition_digest,
         inline_overrides,
+        project_hook_overrides,
+        project_trust_override,
         proposed_document,
     )
 
@@ -715,6 +718,8 @@ def codex_exec_probe(
         raise typer.BadParameter("format must be text or json")
     if not allow_hook_trust_bypass:
         raise typer.BadParameter("--allow-hook-trust-bypass is required for the hook probe")
+    if hook_source not in {"untrusted-project", "trusted-project", "cli", "duplicate"}:
+        raise typer.BadParameter("invalid hook source probe variant")
     auth = authentication_preflight(mode="existing-session")
     if not auth.automation_ready:
         raise typer.BadParameter(auth.diagnostic or "Codex authentication is unavailable")
@@ -733,11 +738,12 @@ def codex_exec_probe(
         )
         subprocess.run(["git", "add", "README.md", "test_probe.py"], cwd=root, check=True)
         subprocess.run(["git", "commit", "-qm", "probe fixture"], cwd=root, check=True)
-        hook_dir = root / ".codex"
-        hook_dir.mkdir(mode=0o700)
-        hook_file = hook_dir / "hooks.json"
-        hook_file.write_text(json.dumps(proposed_document(), separators=(",", ":")) + "\n")
-        os.chmod(hook_file, 0o600)
+        if hook_source != "cli":
+            hook_dir = root / ".codex"
+            hook_dir.mkdir(mode=0o700)
+            hook_file = hook_dir / "hooks.json"
+            hook_file.write_text(json.dumps(proposed_document(), separators=(",", ":")) + "\n")
+            os.chmod(hook_file, 0o600)
         state = root.parent / f".{root.name}-state"
         metrics = root.parent / f".{root.name}-metrics.jsonl"
         environment = codex_agent_environment((), "probe", "existing-session", None)
@@ -751,6 +757,14 @@ def codex_exec_probe(
         )
         backend = create_backend("exec", allow_hook_trust_bypass=True)
         capabilities = asyncio.run(backend.doctor())
+        source_overrides = (
+            project_hook_overrides()
+            if hook_source in {"untrusted-project", "trusted-project"}
+            else inline_overrides()
+        )
+        trust_overrides = (
+            () if hook_source == "untrusted-project" else (project_trust_override(root).value,)
+        )
         result = asyncio.run(
             backend.run(
                 task=(
@@ -765,7 +779,7 @@ def codex_exec_probe(
                 timeout=180,
                 max_turns=1,
                 environment=environment,
-                config_overrides=inline_overrides(),
+                config_overrides=trust_overrides + source_overrides,
                 validation_callback=None,
                 cancellation=None,
             )
@@ -794,6 +808,9 @@ def codex_exec_probe(
             else "failed",
             "hook_definition_digest": definition_digest(),
             "trust_bypass": True,
+            "hook_source": hook_source,
+            "project_trust_override": "invocation_only",
+            "trusted_path_digest": project_trust_override(root).trusted_path_digest,
             "result_state": (
                 "passed"
                 if result.status == "completed" and metric_count > 0 and compacted > 0
@@ -873,7 +890,7 @@ def codex_hooks_doctor() -> None:
     import subprocess
 
     from llmcut.integrations.codex.hooks.capabilities import capabilities_for
-    from llmcut.integrations.codex.hooks.config import definition_digest
+    from llmcut.integrations.codex.hooks.config import definition_digest, project_trust_override
 
     executable = shutil.which("codex")
     version = None
@@ -888,6 +905,9 @@ def codex_hooks_doctor() -> None:
         )
         bypass = "--dangerously-bypass-hook-trust" in help_result.stdout
     target = _hook_config_path()
+    project_root = Path.cwd().resolve()
+    project_hook = project_root / ".codex" / "hooks.json"
+    trust = project_trust_override(project_root)
     capabilities = capabilities_for(version or "unavailable")
     typer.echo(
         json.dumps(
@@ -898,6 +918,14 @@ def codex_hooks_doctor() -> None:
                 "supported_events": ["SessionStart", "PostToolUse"],
                 "configured_source": str(target),
                 "configured": target.is_file(),
+                "project_root": str(project_root),
+                "project_trust_requested": "invocation_only",
+                "project_trust_effective": "observable only through an activation probe",
+                "trusted_path_digest": trust.trusted_path_digest,
+                "project_hook_source_present": project_hook.is_file(),
+                "cli_hook_source_present": False,
+                "profile_hook_source_present": False,
+                "hook_definition_trust_bypass": bypass,
                 "hook_definition_digest": definition_digest(),
                 "trust_state": "observable through Codex /hooks only",
                 "exclusive_model_replacement_verified": (
@@ -906,10 +934,12 @@ def codex_hooks_doctor() -> None:
                 "direct_exec_probe_ready": bool(
                     executable and bypass and capabilities.post_replacement == "supported"
                 ),
+                "activation_readiness": bool(
+                    executable and bypass and capabilities.post_replacement == "supported"
+                ),
                 "evaluation_ready": False,
                 "evaluation_blocker": (
-                    "SDK App Server hook activation was not observed; direct-exec conformance "
-                    "does not establish evaluation-surface support"
+                    "isolated project hooks were not activated by invocation-only project trust"
                     if capabilities.post_replacement == "supported"
                     else "exact runtime version has no committed direct-exec replacement probe"
                 ),
@@ -988,6 +1018,7 @@ def codex_hooks_capabilities() -> None:
 def codex_hooks_probe(
     post_tool_use: Annotated[bool, typer.Option("--post-tool-use")] = False,
     pre_tool_use: Annotated[bool, typer.Option("--pre-tool-use")] = False,
+    activation: Annotated[bool, typer.Option("--activation")] = False,
     output_format: Annotated[str, typer.Option("--format")] = "text",
     output: Annotated[Path | None, typer.Option("--output")] = None,
     allow_hook_trust_bypass: Annotated[bool, typer.Option("--allow-hook-trust-bypass")] = False,
@@ -996,7 +1027,7 @@ def codex_hooks_probe(
     """Run an explicit, version-bound hook conformance probe."""
     from llmcut.integrations.codex.hooks.conformance import PostVariant, run_live_post_matrix
 
-    if post_tool_use == pre_tool_use:
+    if sum((post_tool_use, pre_tool_use, activation)) != 1:
         raise typer.BadParameter("select exactly one conformance probe")
     if not allow_hook_trust_bypass:
         raise typer.BadParameter("--allow-hook-trust-bypass is required for automation")
@@ -1004,6 +1035,9 @@ def codex_hooks_probe(
         raise typer.BadParameter(
             "PreToolUse probe is unavailable until the PostToolUse matrix runs"
         )
+    if activation:
+        codex_exec_probe(output_format, output, allow_hook_trust_bypass)
+        return
     if output_format not in {"text", "json"}:
         raise typer.BadParameter("format must be text or json")
     variants = (PostVariant(variant),) if variant else None

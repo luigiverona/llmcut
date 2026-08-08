@@ -514,9 +514,11 @@ class CodexEvaluator:
             hook_observation["activation"] = (
                 "observed"
                 if hooks_observed
-                else "configured_no_command"
+                else "no_eligible_commands"
                 if not commands_observed
-                else "missing"
+                else "project_layer_untrusted"
+                if hook_config is not None
+                else "hook_observation_missing"
             )
             hook_observation["validity"] = (
                 "valid"
@@ -1186,9 +1188,9 @@ def _usage_median(values: list[dict[str, Any]], keys: tuple[str, ...]) -> float 
 
 
 def _hook_overrides() -> tuple[str, ...]:
-    from llmcut.integrations.codex.hooks.config import inline_overrides
+    from llmcut.integrations.codex.hooks.config import project_hook_overrides
 
-    return inline_overrides()
+    return project_hook_overrides()
 
 
 def _hook_replacement_verified(executable: str, backend: str) -> bool:

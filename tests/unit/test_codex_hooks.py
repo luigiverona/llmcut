@@ -26,6 +26,8 @@ from llmcut.integrations.codex.hooks.config import (
     hook_command,
     inline_overrides,
     install_hooks,
+    project_hook_overrides,
+    project_trust_override,
     proposed_document,
     remove_hooks,
 )
@@ -272,6 +274,7 @@ def test_configuration_merge_remove_and_permissions(tmp_path: Path) -> None:
     assert overrides[0] == "features.hooks=true"
     assert "hooks.PostToolUse=" in overrides[1]
     assert json.dumps(hook_command()) in overrides[1]
+    assert project_hook_overrides() == ("features.hooks=true",)
 
 
 def test_real_hook_subprocess_model_visible_replacement(tmp_path: Path) -> None:
@@ -349,7 +352,7 @@ def test_hook_management_cli_and_gc(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert doctor.exit_code == 0
     report = json.loads(doctor.stdout)
     assert report["exclusive_model_replacement_verified"] is (
-        report["runtime_version"] in {"codex-cli 0.144.4", "codex-cli 0.146.0"}
+        report["runtime_version"] in {"codex-cli 0.144.4", "codex-cli 0.146.0", "codex-cli 0.146.1"}
     )
     assert report["direct_exec_probe_ready"] is (
         report["exclusive_model_replacement_verified"] and report["one_off_trust_bypass"]
@@ -587,13 +590,11 @@ def test_evaluation_hook_configuration_metrics_and_cleanup(tmp_path: Path) -> No
     config = _write_evaluation_hook(worktree)
     assert stat.S_IMODE(config.stat().st_mode) == 0o600
     assert json.loads(config.read_text())["hooks"]["PostToolUse"][0]["matcher"] == "^Bash$"
-    assert _hook_overrides()[0] == "features.hooks=true"
-    assert "hooks.PostToolUse=" in _hook_overrides()[1]
+    assert _hook_overrides() == ("features.hooks=true",)
     assert _hook_replacement_verified("fake_codex.py", "fake")
     assert not _hook_replacement_verified("codex", "sdk")
     with pytest.raises(RuntimeError, match="without an existing"):
         _write_evaluation_hook(worktree)
-
     state = tmp_path / ".hook-evidence"
     state.mkdir(mode=0o700)
     (state / "entry").write_text("metadata")
@@ -634,6 +635,55 @@ def test_evaluation_hook_configuration_metrics_and_cleanup(tmp_path: Path) -> No
     assert not state.exists() and not metrics.exists()
     config.unlink()
     config.parent.rmdir()
+
+
+def test_project_trust_override_is_exact_safe_and_invocation_only(tmp_path: Path) -> None:
+    worktree = tmp_path / 'work tree.dots-hyphens-ü-"quoted"'
+    worktree.mkdir()
+    override = project_trust_override(worktree)
+    assert override.scope == "invocation_only"
+    assert override.value.startswith("projects.")
+    assert override.value.endswith('.trust_level="trusted"')
+    assert json.dumps(str(worktree.resolve()), ensure_ascii=False) in override.value
+    assert str(worktree.resolve()) not in override.trusted_path_digest
+    assert not any(tmp_path.rglob("config.toml"))
+
+    relative = Path("relative-worktree")
+    with pytest.raises(ValueError, match="absolute"):
+        project_trust_override(relative)
+    linked = tmp_path / "linked"
+    linked.symlink_to(worktree, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlink"):
+        project_trust_override(linked)
+    regular_file = tmp_path / "not-a-directory"
+    regular_file.touch()
+    with pytest.raises(ValueError, match="directory"):
+        project_trust_override(regular_file)
+    newline = tmp_path / "unsafe\nworktree"
+    newline.mkdir()
+    with pytest.raises(ValueError, match="unsafe"):
+        project_trust_override(newline)
+
+
+def test_remove_hooks_missing_and_non_llmcut_shapes(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.json"
+    assert remove_hooks(missing)["changed"] is False
+    plain = tmp_path / "plain.json"
+    plain.write_text(json.dumps({"unrelated": True}))
+    assert remove_hooks(plain)["changed"] is False
+    retained = tmp_path / "retained.json"
+    retained.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PostToolUse": [
+                        {"matcher": "Other", "hooks": [{"type": "command", "command": "x"}]}
+                    ]
+                }
+            }
+        )
+    )
+    assert remove_hooks(retained)["changed"] is False
 
 
 def test_hook_capability_is_surface_and_version_bound(monkeypatch: pytest.MonkeyPatch) -> None:

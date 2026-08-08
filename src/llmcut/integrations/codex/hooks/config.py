@@ -6,6 +6,7 @@ import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, cast
 
@@ -14,6 +15,32 @@ from llmcut.model import digest_bytes
 DEFAULT_THRESHOLD = 8_192
 MAX_HOOK_INPUT = 8 * 1024 * 1024
 MAX_COMPACT_BYTES = 24_000
+
+
+class HookSource(StrEnum):
+    PROJECT_HOOKS_JSON = "project_hooks_json"
+    PROJECT_CONFIG_TOML = "project_config_toml"
+    CLI_OVERRIDE = "cli_override"
+    PROFILE = "profile"
+    USER_HOOKS_JSON = "user_hooks_json"
+
+
+@dataclass(frozen=True, slots=True)
+class HookSourceDiagnostic:
+    source: HookSource
+    configured: bool
+    config_layer_active: bool | None
+    requires_project_trust: bool
+    requires_definition_trust: bool
+    hook_observed: bool | None
+    runtime_version: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectTrustOverride:
+    value: str
+    trusted_path_digest: str
+    scope: str = "invocation_only"
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +102,7 @@ def definition_digest(document: dict[str, Any] | None = None) -> str:
 
 
 def inline_overrides() -> tuple[str, ...]:
-    """Render the same hook through the trusted command-line config layer."""
+    """Render a CLI-only hook source for conformance diagnostics."""
     command = json.dumps(hook_command())
     value = (
         'hooks.PostToolUse=[{matcher="^Bash$",hooks=[{type="command",command='
@@ -83,6 +110,30 @@ def inline_overrides() -> tuple[str, ...]:
         "additionalContextLimit=9000}]}]"
     )
     return ("features.hooks=true", value)
+
+
+def project_hook_overrides() -> tuple[str, ...]:
+    """Enable the authoritative project ``hooks.json`` source without duplicating it."""
+    return ("features.hooks=true",)
+
+
+def project_trust_override(worktree: Path) -> ProjectTrustOverride:
+    """Render exact, invocation-scoped trust for one canonical disposable worktree."""
+    expanded = worktree.expanduser()
+    if not expanded.is_absolute():
+        raise ValueError("trusted worktree must be an absolute path")
+    if expanded.is_symlink():
+        raise ValueError("trusted worktree must not be a symlink")
+    canonical = expanded.resolve(strict=True)
+    if not canonical.is_dir():
+        raise ValueError("trusted worktree must be a directory")
+    rendered = str(canonical)
+    if any(character in rendered for character in ("\x00", "\n", "\r")):
+        raise ValueError("trusted worktree contains an unsafe character")
+    # JSON strings are valid TOML basic strings and safely quote dots, spaces,
+    # Unicode, and embedded quotes in a dotted key segment.
+    value = f'projects.{json.dumps(rendered, ensure_ascii=False)}.trust_level="trusted"'
+    return ProjectTrustOverride(value, digest_bytes(rendered.encode()))
 
 
 def install_hooks(target: Path, *, dry_run: bool = False) -> dict[str, Any]:
