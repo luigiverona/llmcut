@@ -1,0 +1,74 @@
+{
+  "schema": "llmcut.codex-hook-source-activation.v1",
+  "generated_at": "2026-08-08T15:55:00-05:00",
+  "runtime_version": "codex-cli 0.146.1",
+  "backend": "exec",
+  "authentication": "existing-session",
+  "trust_bypass": "documented_one_off",
+  "raw_prompts_persisted": false,
+  "raw_command_output_persisted": false,
+  "variants": [
+    {
+      "source": "project_hooks_json",
+      "project_trust": "absent",
+      "cli_hook_source": false,
+      "terminal_state": "completed",
+      "command_events": 2,
+      "hook_events": 0,
+      "input_tokens": 26621,
+      "result": "project_layer_untrusted"
+    },
+    {
+      "source": "project_hooks_json+cli_override",
+      "project_trust": "invocation_override",
+      "cli_hook_source": true,
+      "terminal_state": "completed",
+      "command_events": 2,
+      "hook_events": 0,
+      "input_tokens": 23239,
+      "result": "hook_observation_missing"
+    },
+    {
+      "source": "cli_override",
+      "project_trust": "invocation_override",
+      "cli_hook_source": true,
+      "terminal_state": "completed",
+      "command_events": 2,
+      "hook_events": 0,
+      "input_tokens": 24904,
+      "result": "hook_observation_missing"
+    },
+    {
+      "source": "project_hooks_json",
+      "project_trust": "invocation_override",
+      "cli_hook_source": false,
+      "terminal_state": "completed",
+      "command_events": 2,
+      "hook_events": 0,
+      "input_tokens": 24924,
+      "result": "project_layer_untrusted"
+    },
+    {
+      "source": "temporary_profile",
+      "project_trust": "not_applicable",
+      "cli_hook_source": false,
+      "terminal_state": "completed",
+      "command_events": 2,
+      "hook_events": 0,
+      "result": "profile_not_loaded_with_user_config_isolation"
+    },
+    {
+      "source": "already_trusted_repository_project_hooks_json",
+      "project_trust": "normal_config_layer",
+      "terminal_state": "completed",
+      "hook_events": 1,
+      "exclusive_replacement": true,
+      "original_only_canaries_present": false,
+      "compact_only_canary_present": true,
+      "input_tokens": 27618,
+      "capture_digest": "sha256:1e84b7811d0edb8e31c0a78331a1599499a5724502df4b853184c2d50ceaea8e"
+    }
+  ],
+  "conclusion": "Invocation-scoped project trust was accepted but did not activate project hook discovery before configuration loading on codex-cli 0.146.1. Normal configuration loading in an already trusted repository still activated exclusive replacement. Isolated evaluation remains blocked.",
+  "release_statistics_eligible": false
+}

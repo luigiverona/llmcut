@@ -21,6 +21,9 @@
   command/hook digest reconciliation. Hook-required live SDK/App Server runs now fail before quota.
 - The first authenticated exec probe emitted terminal usage and command events but zero hook events
   in three bounded attempts; the pilot and release suite were withheld and v0.6.0 remains blocked.
+- A hook-source matrix on Codex CLI 0.146.1 confirmed exclusive replacement in an already trusted
+  repository, but invocation-only project trust, CLI-only hooks, duplicated sources, and an isolated
+  profile did not activate hooks under user-config isolation. The live pilot remains withheld.
 
 ## 0.5.0 - 2026-08-03
 

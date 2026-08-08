@@ -24,6 +24,27 @@ Codex's documented one-off `--dangerously-bypass-hook-trust` launch option. It i
 default and is recorded as an intervention difference. Normal installations must not use managed
 enterprise configuration as a trust bypass.
 
+Current Codex documentation states that project configuration is loaded only for trusted projects;
+an untrusted project skips its `.codex/` configuration, including `config.toml`, `hooks.json`, and
+rules. The supported durable control is `projects.<absolute-path>.trust_level = "trusted"`.
+Project hooks may be declared in `.codex/hooks.json` or `.codex/config.toml`. Matching hook groups
+from multiple sources are cumulative, so an evaluation must not declare the same llmcut hook both
+as a project hook and as an inline CLI hook. See the official [configuration
+reference](https://developers.openai.com/codex/config-reference), [advanced configuration
+guide](https://developers.openai.com/codex/config-advanced), [hooks
+guide](https://developers.openai.com/codex/hooks), and [`codex exec` CLI
+reference](https://developers.openai.com/codex/cli/reference#codex-exec).
+
+`--dangerously-bypass-hook-trust` runs already-enabled hooks without persisted definition trust; it
+does not promise to activate an otherwise skipped project layer. `--ignore-user-config` disables
+the normal `$CODEX_HOME/config.toml` layer while authentication discovery still uses `CODEX_HOME`.
+On `codex-cli 0.146.1`, an invocation-only `projects."<worktree>".trust_level="trusted"` override
+was accepted but did not make a disposable worktree's project hooks observable. CLI-only,
+duplicated CLI+project, and temporary-profile variants also produced command events but no hook
+events under user-config isolation. The same runtime still produced exclusive replacement from the
+already trusted repository with normal configuration loading. Metadata is retained in
+`docs/evidence/v06-hook-source-activation.json`; this is an activation blocker, not savings evidence.
+
 ## Evidence and security
 
 Hook evidence is separate from managed evidence because exact recovery cannot use persistence
@@ -86,3 +107,8 @@ The first isolated exec-backend probe on `codex-cli 0.146.0` completed with JSON
 events but recorded zero hook events across three bounded configuration attempts. The output pilot
 was therefore not run. This is an activation/configuration blocker, not evidence against the earlier
 exclusive-replacement conformance result and not a token-savings result.
+
+The follow-up source matrix on `codex-cli 0.146.1` confirmed that project trust is part of the
+activation boundary, but it did not validate the proposed invocation-only trust override as a
+working isolated activation mechanism. Production evaluation therefore continues to fail closed
+when an eligible command has no matching hook event. No output pilot or release suite was run.
