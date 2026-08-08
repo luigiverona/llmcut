@@ -68,6 +68,14 @@ Codex hook output is untrusted data. Exact hook evidence is kept outside reposit
 under restrictive permissions, without environment or authentication values. Hook failures pass
 through the original tool result. Persistent installation never grants trust; automated trust
 bypass is explicit, one-off, and limited to controlled evaluation.
+
+The user-level bridge candidate is static and inert without both a random lease ID and separate
+lease token. Leases are restrictive, expiring, repository/cwd/run bound, and outside repositories.
+Changes to `$CODEX_HOME/hooks.json` are locked, atomically merged, journaled without file contents,
+and restored without overwriting concurrent external additions. Ambiguous cleanup fails closed with
+an explicit recovery command. A loopback-only bounded OTLP/HTTP receiver retains only allowlisted
+model/settings metadata and discards prompts, source, reasoning, commands, outputs, and unexpected
+fields; it has not been used as authenticated release evidence because activation stopped first.
 The conformance harness creates unpredictable canaries outside task text and hook configuration,
 stores only comparison metadata, and deletes scripts and hook state during cleanup. Capability
 claims expire on a runtime-version mismatch.

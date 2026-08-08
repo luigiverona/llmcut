@@ -27,6 +27,9 @@ The hook adapter is a separate Codex boundary. For an exact runtime version with
 conformance evidence, a PostToolUse handler may persist an exact large Bash result and return its
 deterministic projection as documented block feedback. This changes neither command execution nor
 exit status. Version mismatch disables the capability claim rather than extrapolating wire behavior.
+The user-source candidate adds a static Codex-specific bridge above that adapter. Protected leases
+select inert, observe, or compact behavior without moving hook policy into the provider-neutral
+runtime. A local OTel observer is a separate metadata-only parity boundary, not an optimization.
 
 ## Canonical model and pipeline
 

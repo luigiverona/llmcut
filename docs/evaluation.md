@@ -74,3 +74,9 @@ observation is rejected before quota use until a safe, version-bound observation
 The initial authenticated exec-backend probe observed terminal usage and command events but zero
 hook events across three bounded attempts. It failed the activation gate, so no output-compaction
 pilot or release suite followed and no reduction is claimed.
+
+A later user-source probe tested the static `$CODEX_HOME/hooks.json` bridge with user config ignored,
+hooks enabled, the explicit trust bypass, and a protected compact lease. The Codex turn completed
+with authoritative usage, but no lease-bound event was recorded. Cleanup restored the absent hooks
+file. This probe is metadata-only conformance evidence, is excluded from release statistics, and
+stopped OTel, continuation, pilot, and release-suite execution.

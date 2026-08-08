@@ -24,6 +24,10 @@
 - A hook-source matrix on Codex CLI 0.146.1 confirmed exclusive replacement in an already trusted
   repository, but invocation-only project trust, CLI-only hooks, duplicated sources, and an isolated
   profile did not activate hooks under user-config isolation. The live pilot remains withheld.
+- Added a static, lease-scoped user-hook bridge candidate with observe/compact modes, atomic
+  user-configuration restoration, concurrent-reference safety, and loopback-only OTel parsing.
+  The authenticated production bridge probe completed with usage but observed zero lease-bound
+  hook events, so OTel/resume/pilot/release measurements remain withheld.
 
 ## 0.5.0 - 2026-08-03
 

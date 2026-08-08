@@ -222,6 +222,10 @@ with exact bounded projections and digest-based Bash recovery. Hook compaction a
 supported local tool results. Unknown, small, mutating, interactive, or unsafe-to-transform outputs
 pass through unchanged. See [hook output compaction](docs/hooks.md).
 
+The latest isolated user-hook bridge probe remained activation-blocked: Codex completed with
+authoritative usage, but no protected lease-bound hook event was observed. The bridge was restored
+cleanly and no pilot or release suite was run. This is not token-savings evidence.
+
 Executable A/B evaluation is available with
 `llmcut agent eval --agent codex --backend sdk --suite suite.toml`. It uses isolated paired
 worktrees, repeated and recorded ordering, official SDK events, argv-safe deterministic validation,

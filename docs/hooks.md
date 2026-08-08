@@ -112,3 +112,28 @@ The follow-up source matrix on `codex-cli 0.146.1` confirmed that project trust 
 activation boundary, but it did not validate the proposed invocation-only trust override as a
 working isolated activation mechanism. Production evaluation therefore continues to fail closed
 when an eligible command has no matching hook event. No output pilot or release suite was run.
+
+## User-level bridge investigation
+
+The next isolated candidate uses the documented user hook source at `$CODEX_HOME/hooks.json`.
+Official Codex documentation says user hooks are independent of project trust, while
+`--ignore-user-config` disables `$CODEX_HOME/config.toml` and leaves authentication discovery in
+`CODEX_HOME`. The documentation does not explicitly guarantee whether the sibling `hooks.json`
+source remains active under that flag, so llmcut treats this as a runtime conformance question.
+
+The candidate definition is static and contains no repository, task, run, session, or evidence
+identifier. `llmcut hook bridge` is inert without a protected lease. A lease uses a random ID plus a
+separate secret token, binds mode, repository, cwd, revision, run, state, metrics, definition digest,
+and expiry, and is stored under `0700`/`0600` state outside the repository. Observe mode records only
+bounded metadata and emits no replacement; compact mode delegates to the existing exact-evidence
+handler. User hook mutation is locked, journaled, atomic, preserves unrelated definitions, restores
+exact original bytes when unchanged, and surgically removes only llmcut's definition after a safe
+concurrent edit.
+
+The bounded production bridge probe on `codex-cli 0.146.1` completed and emitted authoritative
+usage, but recorded zero lease-bound hook events and no compaction. Cleanup restored the previously
+absent user hooks file. Because the bridge is deliberately silent when its lease cannot be resolved,
+the result does not distinguish hook-source non-execution from a launched bridge that did not
+receive its activation variables. It is recorded in
+`docs/evidence/v06-user-hook-production-probe.json`. OTel, resume, pilot, and release-suite work were
+withheld at this stop condition. No token reduction is claimed.

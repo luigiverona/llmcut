@@ -66,6 +66,13 @@ unverified and unavailable because the canonical post-execution mechanism passed
 disabled, terminal usage is authoritative, and hook events reconcile with command events. Inspect
 capabilities with `llmcut agent codex doctor --backend exec`; run the minimal disposable contract
 probe with `llmcut agent codex exec probe --allow-hook-trust-bypass`.
+
+Disposable project hook sources remained unreliable on `codex-cli 0.146.1`. The subsequent static
+user-hook bridge candidate is configured only with explicit `--allow-user-hook-lease`, remains inert
+without a protected lease, and supports an observe-mode parity baseline. Its first authenticated
+production probe nevertheless recorded zero lease-bound events, so it is not yet an eligible live
+evaluation surface. The local OTel model observer is implemented and fake-tested but was not probed
+authentically after this activation stop condition.
 For every task and repetition it materializes separate baseline and optimized Git worktrees at the
 same commit, verifies tracked-file and execution-setting parity, starts a fresh App Server process,
 and runs validation directly as argv arrays. Under the default `standard-baseline` design both modes

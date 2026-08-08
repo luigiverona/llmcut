@@ -1,0 +1,28 @@
+{
+  "schema_version": "1",
+  "kind": "authenticated_metadata_only_probe",
+  "timestamp": "2026-08-08",
+  "runtime": "codex-cli 0.146.1",
+  "backend": "exec",
+  "hook_source": "user_hooks_json",
+  "user_config_ignored": true,
+  "hooks_feature_enabled": true,
+  "hook_trust_bypass": "documented_one_off",
+  "bridge_definition_digest": "sha256:7d0f294c8044b8f98b5e2b9a549734516469819e35fede0d7ae0e73a886b2d86",
+  "terminal_state": "completed",
+  "authoritative_usage_observed": true,
+  "lease_bound_hook_events": 0,
+  "compacted_events": 0,
+  "exclusive_replacement_observed": false,
+  "hook_process_error_observed": false,
+  "cleanup": "complete",
+  "user_hooks_file_restored_absent": true,
+  "result_state": "hook_observation_missing",
+  "release_eligible": false,
+  "generation_command": "uv run llmcut agent codex hooks probe --user-source --format json --allow-hook-trust-bypass --allow-user-hook-lease",
+  "limitations": [
+    "The probe retained no prompt or command-output content.",
+    "The bridge is intentionally silent when its protected lease cannot be resolved, so this result does not distinguish a non-launched hook from an invoked bridge that lacked lease activation variables.",
+    "This conformance probe is not a savings benchmark and is excluded from release statistics."
+  ]
+}

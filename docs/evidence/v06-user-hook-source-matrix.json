@@ -1,0 +1,50 @@
+{
+  "schema_version": "1",
+  "kind": "manually_transcribed_historical_metadata",
+  "timestamp": "2026-08-08",
+  "runtime": "codex-cli 0.146.1",
+  "raw_capture_available": false,
+  "release_evidence": false,
+  "variants": [
+    {
+      "id": "A",
+      "user_hooks": true,
+      "ignore_user_config": true,
+      "hooks_feature": true,
+      "trust_bypass": true,
+      "project_trusted": false,
+      "activation_marker": "observed"
+    },
+    {
+      "id": "A-repeat",
+      "fresh_worktree": true,
+      "activation_marker": "observed"
+    },
+    {
+      "id": "B",
+      "ignore_user_config": false,
+      "activation_marker": "observed",
+      "release_ready": false
+    },
+    {
+      "id": "C",
+      "hooks_feature": false,
+      "activation_marker": "absent"
+    },
+    {
+      "id": "D",
+      "trust_bypass": false,
+      "activation_marker": "absent"
+    },
+    {
+      "id": "E",
+      "unrelated_untrusted_project": true,
+      "activation_marker": "observed"
+    }
+  ],
+  "limitations": [
+    "The original transient marker artifacts were cleaned before this metadata file was created.",
+    "No capture digest or raw event digest is claimed.",
+    "The matrix proved execution of a diagnostic user hook, not activation of the later lease-scoped production bridge."
+  ]
+}
